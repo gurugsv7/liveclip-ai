@@ -371,3 +371,30 @@ def test_database_from_before_monitoring_column_is_migrated(tmp_path):
     db = Database(db_path)
     assert "monitoring" in {r[1] for r in db._conn.execute("PRAGMA table_info(streamers)")}
     db.close()
+
+
+def test_streamer_language_setting(app_env):
+    c = app_env["client"]
+    r = c.patch(f"/api/streams/{app_env['b']}", json={"language": "ta", "caption_mode": "tanglish"}).json()
+    assert r["language"] == "ta" and r["caption_mode"] == "tanglish"
+    assert c.patch(f"/api/streams/{app_env['b']}", json={"language": "xx"}).status_code == 422
+    c.patch(f"/api/streams/{app_env['b']}", json={"language": "en"})
+
+
+def test_user_reel_window_is_exported_exactly_never_auto_cut(app_env):
+    c, ctx = app_env["client"], app_env["ctx"]
+    clip = next(x for x in c.get("/api/clips").json() if x["files"]["file_path"])
+    D = clip["duration"]
+    s0, s1 = 2.0, min(D, 2.0 + 6.0)
+    r = c.patch(f"/api/clips/{clip['id']}", json={"trim_start": s0, "trim_end": s1, "layout_params": {"manual_window": True}})
+    assert r.status_code == 200 and r.json()["layout_params"]["manual_window"] is True
+    spec = ctx.clips.render_spec(ctx.clips.get(clip["id"]), False, ctx.paths.temp / "x.mp4")
+    from liveclip.editing.render import build_pieces
+    assert spec.segments is None and build_pieces(spec) == [(s0, s1)]
+    too_long = c.patch(f"/api/clips/{clip['id']}", json={"trim_start": 0, "trim_end": 31 if D > 31 else D,
+                                                            "layout_params": {"manual_window": True}})
+    assert too_long.status_code in (200, 422) and (D <= 30.05 or too_long.status_code == 422)
+    # choosing a layout in the editor locks it (no automatic facecam switch)
+    got = c.patch(f"/api/clips/{clip['id']}", json={"layout": "letterbox"}).json()
+    assert got["layout"] == "letterbox" and got["layout_params"]["layout_locked"] is True
+    c.patch(f"/api/clips/{clip['id']}", json={"layout": "smart_crop", "layout_params": {"manual_window": False}})

@@ -17,6 +17,13 @@ Setup/run/test: `scripts\setup.ps1`, `scripts\start.ps1`, `scripts\stop.ps1`, `s
   gameplay so they don't cover the action.
 - Prefer the facecam layout (face on top, gameplay pinned below) when the stream has a
   facecam; pin the gameplay region (e.g. a chess board) instead of chasing the streamer's head.
+- **The user's reel window wins**: once they press "Use this window" (`layout_params.manual_window`),
+  export renders exactly that ≤30 s stretch — no automatic cut. Without one, `best_reel_cut` picks.
+- Facecam layout is automatic when a facecam is known (`effective_layout`), unless the user picked
+  a layout for that clip (`layout_params.layout_locked`).
+- Tamil streamers (`streamers.language = ta`): Whisper in Tamil, words romanized to casual
+  Tanglish (`ai/tanglish.py`, same timings) unless `caption_mode = native` (Tamil script, Nirmala UI).
+  Bigger model only if already downloaded — never download 3 GB mid-capture.
 - **Every export (and Approve, which exports) ships a post kit** next to the MP4
   (`editing/cover.py`): `.cover.jpg` and `.caption.txt`.
   - Cover = a real frame, never generated. With a facecam: the streamer's own face (inside the

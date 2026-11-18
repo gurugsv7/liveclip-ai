@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS streamers (
   color TEXT NOT NULL DEFAULT '#8b5cf6',
   ai_enabled INTEGER NOT NULL DEFAULT 1,
   monitoring INTEGER NOT NULL DEFAULT 0,  -- user wants it captured; resumed after an app restart
+  language TEXT NOT NULL DEFAULT 'en',    -- en | ta | auto (Whisper language)
+  caption_mode TEXT NOT NULL DEFAULT 'tanglish', -- for Tamil: tanglish (English letters) | native (Tamil script)
   facecam TEXT,              -- JSON {x,y,w,h} normalized 0..1
   default_layout TEXT NOT NULL DEFAULT 'smart_crop',
   usage_notes TEXT NOT NULL DEFAULT '',
@@ -228,6 +230,10 @@ class Database:
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(streamers)")}
         if "monitoring" not in cols:
             self._conn.execute("ALTER TABLE streamers ADD COLUMN monitoring INTEGER NOT NULL DEFAULT 0")
+        if cols and "language" not in cols:
+            self._conn.execute("ALTER TABLE streamers ADD COLUMN language TEXT NOT NULL DEFAULT 'en'")
+        if cols and "caption_mode" not in cols:
+            self._conn.execute("ALTER TABLE streamers ADD COLUMN caption_mode TEXT NOT NULL DEFAULT 'tanglish'")
         ccols = {r[1] for r in self._conn.execute("PRAGMA table_info(clips)")}
         for col in ("cover_path", "post_caption"):
             if ccols and col not in ccols:

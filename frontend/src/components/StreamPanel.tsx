@@ -1,5 +1,5 @@
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bot, BotOff, ChevronDown, Expand, GripVertical, MoreHorizontal, Pause, Play, Plus, Power, RefreshCw,
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bot, BotOff, Check, ChevronDown, Languages, Expand, GripVertical, MoreHorizontal, Pause, Play, Plus, Power, RefreshCw,
   Shrink, Trash2, Volume2, VolumeX,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -272,7 +272,7 @@ export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid, 
         <div className="relative">
           <IconBtn label="More" onClick={() => setMenu((m) => !m)}><MoreHorizontal className="h-4 w-4" /></IconBtn>
           {menu && (
-            <div className="absolute bottom-full right-0 z-20 mb-1 w-48 rounded-lg border border-ink-600 bg-ink-800 p-1 text-xs shadow-xl animate-slideIn">
+            <div className="absolute bottom-full right-0 z-20 mb-1 w-56 rounded-lg border border-ink-600 bg-ink-800 p-1 text-xs shadow-xl animate-slideIn">
               <MenuItem icon={<Trash2 className="h-3.5 w-3.5" />} disabled={!live} onClick={() => { setMenu(false); setConfirmDel(true); }}>Delete buffer…</MenuItem>
               {onMove && MOVES.map(({ dir, icon, to }) => {
                 const target = to(streamer.slot);
@@ -280,6 +280,18 @@ export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid, 
                   <MenuItem key={dir} icon={icon} onClick={() => { setMenu(false); onMove(target); }}>Move {dir}</MenuItem>
                 );
               })}
+              <div className="mt-1 border-t border-ink-600 px-2 pb-0.5 pt-1.5 text-[10px] uppercase text-ink-400">Speech &amp; captions</div>
+              {LANGS.map((l) => {
+                const on = (streamer.language ?? "en") === l.language && (l.language !== "ta" || (streamer.caption_mode ?? "tanglish") === l.caption_mode);
+                return (
+                  <MenuItem key={l.label} icon={on ? <Check className="h-3.5 w-3.5" /> : <Languages className="h-3.5 w-3.5 opacity-40" />}
+                    onClick={() => { setMenu(false); run("lang", async () => {
+                      await api.patchStream(streamer.id, { language: l.language, caption_mode: l.caption_mode });
+                      useStore.getState().setStreams(await api.streams());
+                    }, `${streamer.name}: ${l.label}`); }}>{l.label}</MenuItem>
+                );
+              })}
+              <div className="mt-1 border-t border-ink-600" />
               <MenuItem icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={() => { setMenu(false); onReplace(streamer); }}>Replace stream…</MenuItem>
               {live ? (
                 <MenuItem icon={<Power className="h-3.5 w-3.5" />} danger onClick={() => { setMenu(false); setConfirmStop(true); }}>Stop monitoring</MenuItem>
@@ -306,6 +318,14 @@ export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid, 
 }
 
 export const DRAG_TYPE = "application/x-liveclip-stream";
+
+/** Whisper language per streamer; Tamil captions in Tanglish (English letters) or Tamil script */
+const LANGS: { label: string; language: "en" | "ta" | "auto"; caption_mode: "tanglish" | "native" }[] = [
+  { label: "English", language: "en", caption_mode: "tanglish" },
+  { label: "Tamil · Tanglish captions", language: "ta", caption_mode: "tanglish" },
+  { label: "Tamil · Tamil script", language: "ta", caption_mode: "native" },
+  { label: "Auto-detect language", language: "auto", caption_mode: "tanglish" },
+];
 
 /** 2x2 grid: slots 0 1 / 2 3 */
 const MOVES: { dir: string; icon: React.ReactNode; to: (s: number) => number | null }[] = [

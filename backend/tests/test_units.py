@@ -611,3 +611,80 @@ def test_post_caption_uses_only_real_words_credit_and_few_hashtags():
     tags = lines[-1].split()
     assert 3 <= len(tags) <= 5 and all(t.startswith("#") and t == t.lower() for t in tags) and "#xqc" in tags
     assert sum(ch in "😂😳🔥" for ch in lines[0]) == 1
+
+
+# ---------------------------------------------------------------- Tamil / Tanglish
+def test_tamil_words_become_casual_tanglish():
+    from liveclip.ai.tanglish import romanize_word
+    cases = {"டேய்": "dey", "என்ன": "enna", "பண்ற": "panra", "செம்ம": "semma", "வேற": "vera", "ஐயோ": "aiyo",
+             "கொஞ்சம்": "konjam", "வந்து": "vandhu", "அது": "adhu", "தம்பி": "thambi", "தமிழ்": "thamizh",
+             "போடா": "poda", "வா": "vaa", "சரி": "sari", "விட்டு": "vittu", "வெற்றி": "vetri", "எங்க": "enga",
+             "பச்சை": "pachai", "சத்தியமா": "sathiyama", "கடவுளே": "kadavule", "முடியல": "mudiyala"}
+    assert {k: romanize_word(k) for k in cases} == cases
+
+
+def test_tanglish_keeps_word_timings_and_english_words():
+    from liveclip.ai.tanglish import romanize_words
+    words = [{"text": "டேய்", "start": 1.0, "end": 1.3}, {"text": "semma", "start": 1.3, "end": 1.6},
+             {"text": "game!", "start": 1.6, "end": 2.0}]
+    out = romanize_words(words)
+    assert [w["text"] for w in out] == ["dey", "semma", "game!"]
+    assert [(w["start"], w["end"]) for w in out] == [(w["start"], w["end"]) for w in words]
+
+
+def test_tamil_hype_counts_as_excited_speech_but_calm_tamil_does_not():
+    from liveclip.ai import scoring
+    from liveclip.ai.tanglish import romanize_words
+
+    def ws(phrase):
+        return [{"text": w, "start": i * 0.3, "end": i * 0.3 + 0.25} for i, w in enumerate(phrase.split())]
+    hype = romanize_words(ws("ஐயோ டேய் என்ன டா இது! வேற லெவல் செம்ம"))
+    calm = romanize_words(ws("இப்போ நான் அந்த பக்கம் போறேன் சரி"))
+    s_hype, _, hits = scoring.live_speech_raw(hype)
+    s_calm, _, _ = scoring.live_speech_raw(calm)
+    assert s_hype >= 0.8 and any("aiyo" in h for h in hits)
+    assert s_calm < 0.2
+    assert scoring.live_speech_raw(ws("ma ma ma okay"))[0] < 0.2          # "ma" is not "mass"
+
+
+def test_tamil_script_captions_get_a_font_with_tamil_letters():
+    from liveclip.clips.service import _tamil_font
+    assert _tamil_font("Segoe UI Black", [{"text": "semma"}], "vera level") == "Segoe UI Black"
+    assert _tamil_font("Segoe UI Black", [{"text": "செம்ம"}], None) in ("Nirmala UI", "Tamil Sangam MN")
+
+
+def test_old_database_gets_language_columns():
+    import sqlite3
+    from liveclip.db import Database
+    import tempfile, os
+    p = os.path.join(tempfile.mkdtemp(), "old.db")
+    con = sqlite3.connect(p)
+    con.execute("CREATE TABLE streamers (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL, platform TEXT NOT NULL,"
+                " url TEXT NOT NULL, slot INTEGER NOT NULL DEFAULT 0, priority INTEGER NOT NULL DEFAULT 2,"
+                " color TEXT NOT NULL DEFAULT '#8b5cf6', ai_enabled INTEGER NOT NULL DEFAULT 1, facecam TEXT,"
+                " default_layout TEXT NOT NULL DEFAULT 'smart_crop', usage_notes TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL)")
+    con.commit(); con.close()
+    db = Database(p)
+    cols = {r[1] for r in db._conn.execute("PRAGMA table_info(streamers)")}
+    assert {"language", "caption_mode", "monitoring"} <= cols
+    db.close()
+
+
+def test_whisper_repetition_loops_are_dropped_but_real_repeats_kept():
+    """Real tamilgaming live windows: 'e, e, e, e, ...' and 'muthum muthum muthum ...' (music
+    intro) came back as speech and the repetition counted as excitement."""
+    from liveclip.ai.transcriber import drop_loops
+    w = lambda ts: [{"text": t, "start": i * 0.2, "end": i * 0.2 + 0.15} for i, t in enumerate(ts)]
+    assert drop_loops(w(["e,"] * 40)) == []
+    assert [x["text"] for x in drop_loops(w(["paarkkum!"] + ["muthum"] * 25 + ["ma"]))] == ["paarkkum!", "ma"]
+    assert [x["text"] for x in drop_loops(w(["yes", "yes", "yes", "let's", "go"]))] == ["yes", "yes", "yes", "let's", "go"]
+    assert len(drop_loops(w(["sellungal"] * 4 + ["avvaarungal"]))) == 5
+
+
+def test_facecam_layout_is_used_when_a_facecam_is_known_unless_user_chose():
+    from liveclip.clips.service import effective_layout
+    fc = {"x": 0.0, "y": 0.0, "w": 0.2, "h": 0.3}
+    assert effective_layout("smart_crop", {}, fc) == "facecam"            # real xqc reel: face only 2 s on screen
+    assert effective_layout("smart_crop", {"layout_locked": True}, fc) == "smart_crop"
+    assert effective_layout("smart_crop", {}, None) == "smart_crop"
+    assert effective_layout("letterbox", {}, fc) == "letterbox"

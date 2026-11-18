@@ -9,6 +9,7 @@ service falls back to CPU int8 and reports why.
 from __future__ import annotations
 
 import glob
+import re
 import logging
 import os
 import sys
@@ -32,6 +33,31 @@ def _add_nvidia_dll_dirs() -> None:
                 pass
 
 
+LOOP_RUN = 6     # the same word 6+ times in a row is a Whisper loop (music/noise), not speech
+
+
+def _norm(t: str) -> str:
+    return re.sub(r"[^\w']", "", t.lower())
+
+
+def drop_loops(words: list[dict]) -> list[dict]:
+    """Remove hallucinated repetition loops ("e, e, e, e...", "muthum muthum muthum...").
+    Short real repeats ("yes yes yes", "no no no no") are kept."""
+    out, i = [], 0
+    while i < len(words):
+        j = i
+        while j + 1 < len(words) and _norm(words[j + 1]["text"]) == _norm(words[i]["text"]) and _norm(words[i]["text"]):
+            j += 1
+        if j - i + 1 < LOOP_RUN:
+            out.extend(words[i:j + 1])
+        i = j + 1
+    return out
+
+
+def _text(words: list[dict]) -> str:
+    return " ".join(w["text"] for w in words).strip()
+
+
 class TranscriptionUnavailable(RuntimeError):
     pass
 
@@ -46,6 +72,7 @@ class Transcriber:
         self.status = "not_loaded"
         self.detail = ""
         self.loaded_name = None
+        self._models: dict[str, object] = {}
         self._lock = threading.Lock()
         self.jobs_done = 0
         self.last_ms = None
@@ -59,6 +86,29 @@ class Transcriber:
             return True
         except Exception:
             return False
+
+    def model_downloaded(self, name: str) -> bool:
+        repo = name if "/" in name else f"Systran/faster-whisper-{name}"
+        d = self.models_dir / ("models--" + repo.replace("/", "--")) / "snapshots"
+        return d.is_dir() and any(p.glob("model.bin") for p in d.iterdir() if p.is_dir())
+
+    def _get(self, name: str | None):
+        """The default model, or another (e.g. large-v3 for Tamil) when it's already on disk."""
+        cfg = self.cfg_getter().ai
+        if not name or name == cfg.whisper_model:
+            self._load()
+            return self.model, self.loaded_name
+        if name not in self._models:
+            if not self.model_downloaded(name):
+                log.info("whisper %s not downloaded; using %s (run scripts/download-model)", name, cfg.whisper_model)
+                self._load()
+                return self.model, self.loaded_name
+            self._load()                                  # resolves device/compute type
+            from faster_whisper import WhisperModel
+            self._models[name] = WhisperModel(name, device=self.device, compute_type=self.compute_type,
+                                              download_root=str(self.models_dir), cpu_threads=4)
+            log.info("whisper %s loaded on %s", name, self.device)
+        return self._models[name], name
 
     def _load(self) -> None:
         cfg = self.cfg_getter().ai
@@ -102,15 +152,18 @@ class Transcriber:
         self.detail = "; ".join(errors)[:400]
         raise TranscriptionUnavailable(self.detail)
 
-    def transcribe(self, wav_path: str, *, streamer_id: str, session_id: str, clip_id: str) -> dict:
+    def transcribe(self, wav_path: str, *, streamer_id: str, session_id: str, clip_id: str,
+                   language: str | None = None) -> dict:
         """Returns {text, words:[{text,start,end,prob}], language, avg_logprob, model, ids...}.
         Segments that look like silence hallucinations are dropped, never padded."""
         with self._lock:
-            self._load()
             cfg = self.cfg_getter().ai
+            lang = language or cfg.language or None
+            lang = None if lang == "auto" else lang
+            model, used = self._get(cfg.language_models.get(lang or "", None))
             t0 = time.time()
-            segments, info = self.model.transcribe(
-                wav_path, language=cfg.language or None, beam_size=5, word_timestamps=True,
+            segments, info = model.transcribe(
+                wav_path, language=lang, beam_size=5, word_timestamps=True,
                 vad_filter=True, vad_parameters={"min_silence_duration_ms": 400},
                 condition_on_previous_text=False, no_speech_threshold=0.6,
             )
@@ -129,14 +182,15 @@ class Transcriber:
                                       "prob": round(w.probability, 3)})
             self.jobs_done += 1
             self.last_ms = int((time.time() - t0) * 1000)
+            kept = drop_loops(words)
             return {
                 "streamer_id": streamer_id, "session_id": session_id, "clip_id": clip_id,
-                "text": " ".join(texts).strip(), "words": words, "language": info.language,
+                "text": " ".join(texts).strip() if len(kept) == len(words) else _text(kept), "words": kept, "language": info.language,
                 "avg_logprob": (sum(logprobs) / len(logprobs)) if logprobs else None,
-                "model": f"faster-whisper/{self.loaded_name}/{self.device}",
+                "model": f"faster-whisper/{used}/{self.device}",
             }
 
-    def transcribe_pcm(self, pcm, *, streamer_id: str, session_id: str) -> dict:
+    def transcribe_pcm(self, pcm, *, streamer_id: str, session_id: str, language: str | None = None) -> dict:
         """Fast pass over a short live window (16 kHz int16 PCM from that stream's own
         ring buffer). Same shared model; greedy decoding to keep it ~0.2-0.5 s on GPU.
         Word times are relative to the start of the window."""
@@ -147,8 +201,9 @@ class Transcriber:
             cfg = self.cfg_getter().ai
             t0 = time.time()
             audio = np.asarray(pcm, dtype=np.float32) / 32768.0
+            lang = language or cfg.language or None
             segments, _ = self.model.transcribe(
-                audio, language=cfg.language or None, beam_size=1, best_of=1, word_timestamps=True,
+                audio, language=None if lang == "auto" else lang, beam_size=1, best_of=1, word_timestamps=True,
                 vad_filter=True, vad_parameters={"min_silence_duration_ms": 300},
                 condition_on_previous_text=False, no_speech_threshold=0.6, temperature=0.0,
             )
@@ -162,7 +217,9 @@ class Transcriber:
                         words.append({"text": w.word.strip(), "start": round(w.start, 3), "end": round(w.end, 3)})
             self.live_windows += 1
             self.live_last_ms = int((time.time() - t0) * 1000)
-            return {"streamer_id": streamer_id, "session_id": session_id, "text": " ".join(texts).strip(), "words": words}
+            kept = drop_loops(words)
+            text = " ".join(texts).strip() if len(kept) == len(words) else _text(kept)
+            return {"streamer_id": streamer_id, "session_id": session_id, "text": text, "words": kept}
 
     def info(self) -> dict:
         return {"status": self.status if self.installed() else "unavailable",

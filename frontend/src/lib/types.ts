@@ -66,6 +66,8 @@ export interface Streamer {
   facecam: Rect | null;
   default_layout: Layout;
   usage_notes: string;
+  language?: "en" | "ta" | "auto";
+  caption_mode?: "tanglish" | "native";
   live: LiveStatus | null;
   meters: Meters | null;
 }

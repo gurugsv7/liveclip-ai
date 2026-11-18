@@ -21,7 +21,8 @@ def tokens(text: str) -> set[str]:
 # and no everyday words (what/why/wait/yo/bro/run) — those made plain talk look like hype.
 SHOCK = ["no way", "what the", "oh my god", "oh my gosh", "omg", "are you serious", "are you kidding", "holy",
          "let's go", "lets go", "insane", "oh no", "no shot", "of all time", "in human history", "sick to my stomach",
-         "i'm done", "what just happened", "why did i", "what was that", "how did i", "i can't believe"]
+         "i'm done", "what just happened", "why did i", "what was that", "how did i", "i can't believe",
+         "aiyo", "ayyo", "semma", "vera level", "vera leval", "kadavule", "mudiyala", "sathiyama"]
 LAUGH = ["haha", "hahaha", "lmao", "lol", "hehe"]
 CONFLICT = ["shut up", "liar", "stupid", "trash", "idiot", "idiots"]
 WIN_FAIL = ["clutch", "first try", "world record", "we won", "i won", "i lost", "gg"]
@@ -161,9 +162,14 @@ _STRONG = [
     r"\bof all time\b", r"\bin human history\b", r"\bsick to my stomach\b", r"\bi'?m done\b", r"\bno shot\b",
     # self-blame / disbelief payoffs ("I had a C4, why did I swing?")
     r"\bwhy (did|would|do) i\b", r"\bwhat was that\b", r"\bhow (did|do) i\b",
+    # Tamil, as Tanglish (Tamil speech is romanized before matching)
+    r"\ba+i+y+o+\b", r"\bay+o+\b", r"\bsemm?a\b", r"\bvera level\b", r"\bvera leval\b",
+    r"\benna\s?da (idhu|ithu|nadakkudhu|panra|panringa)\b", r"\bkadavul[ea]\b", r"\bmudiyala\b",
+    r"\bsathiyama\b", r"\bmaa?s+u?\b da\b",
 ]
 _MEDIUM = [r"\bbro\b", r"\bdude\b", r"\bwhat\?", r"\binsane\b", r"\bcrazy\b", r"\bwait\b", r"\bhelp\b", r"\bstop\b",
-           r"\bnah\b", r"\bhaha+\b", r"\bbeautiful\b", r"\bgg\b", r"\bdamn\b"]
+           r"\bnah\b", r"\bhaha+\b", r"\bbeautiful\b", r"\bgg\b", r"\bdamn\b",
+           r"\bde[iy]\b", r"\bpoda\b", r"\bthala\b", r"\benna\b", r"\bmaa?s+u?\b"]
 
 
 def live_speech_raw(words: list[dict]) -> tuple[float, float | None, list[str]]:

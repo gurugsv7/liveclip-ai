@@ -36,6 +36,13 @@ Double-click `Shutdown-in-30s.command` to stop LiveClip cleanly and shut the Mac
 ## 3. Optional: Twitch viewer clips
 Create a free app at https://dev.twitch.tv/console and put `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` in `.env`.
 
+## Optional: Tamil (Tanglish captions)
+In a stream's ⋯ menu pick **Tamil · Tanglish captions**. For better Tamil accuracy, download the bigger
+Whisper model once (~3 GB) while you're *not* monitoring streams, then restart LiveClip:
+```bash
+bash scripts/mac/download-model.sh
+```
+
 ## Tests
 ```bash
 bash scripts/mac/test.sh

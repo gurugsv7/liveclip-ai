@@ -11,6 +11,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+from ..ai.tanglish import is_tamil, romanize_text, romanize_words
 from ..ai.scoring import SpeechNormalizer, live_speech_raw
 from ..ai.transcriber import TranscriptionUnavailable
 from ..detection.sound_events import apply_sound
@@ -368,7 +369,7 @@ class StreamManager:
         return r
 
     def update_streamer(self, sid: str, fields: dict) -> dict:
-        allowed = {"name", "priority", "color", "facecam", "default_layout", "usage_notes", "slot"}
+        allowed = {"name", "priority", "color", "facecam", "default_layout", "usage_notes", "slot", "language", "caption_mode"}
         f = {k: v for k, v in fields.items() if k in allowed}
         if "facecam" in f and f["facecam"] is not None:
             fc = f["facecam"]
@@ -620,8 +621,9 @@ class StreamManager:
             if pcm is None or len(pcm) < 16000 * 3:
                 continue
             try:
+                lang = (self.get_streamer(live.streamer_id) or {}).get("language") or self.ctx.config.ai.language
                 res = await asyncio.to_thread(self.ctx.transcriber.transcribe_pcm, pcm,
-                                              streamer_id=live.streamer_id, session_id=live.session_id)
+                                              streamer_id=live.streamer_id, session_id=live.session_id, language=lang)
             except TranscriptionUnavailable as e:
                 self.ctx.hub.warn("live_speech", "warn", f"Live speech detection paused: {e}")
                 unavailable_until = time.time() + 300
@@ -631,6 +633,8 @@ class StreamManager:
                 continue
             if res["session_id"] != live.session_id or self.sessions.get(live.streamer_id) is not live:
                 continue                                    # stream stopped/replaced meanwhile
+            if is_tamil(res["text"]):
+                res["words"], res["text"] = romanize_words(res["words"]), romanize_text(res["text"])
             raw, peak, hits = live_speech_raw(res["words"])
             val = live.speech_norm(raw)
             live.speech = {"score": val, "raw": raw, "t_end": t1, "peak_t": (t0 + peak) if peak is not None else None,

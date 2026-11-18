@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from ..ai import scoring
+from ..ai.tanglish import is_tamil, romanize_text, romanize_words
 from ..ai.semantic import SemanticScorer
 from ..ai.transcriber import Transcriber, TranscriptionUnavailable
 from ..db import Database, new_id
@@ -27,6 +28,23 @@ from ..jobs import JobRunner, PermanentError, RetryableError
 from ..media import MediaError, run, stream_summary, ffprobe, thumbnail, verify_playable
 
 log = logging.getLogger("liveclip.clips")
+
+
+def effective_layout(layout: str, lp: dict, facecam: dict | None) -> str:
+    """Facecam layout (face on top, content below, captions on the seam) whenever the stream
+    has a facecam, unless the user picked a layout for this clip themselves."""
+    if layout == "smart_crop" and facecam and not lp.get("layout_locked"):
+        return "facecam"
+    return layout
+
+
+def _tamil_font(default: str, words: list | None, title: str | None) -> str:
+    """Segoe UI Black / Arial Black have no Tamil letters (they'd render as boxes)."""
+    text = " ".join(w.get("text", "") for w in (words or [])) + " " + (title or "")
+    if not is_tamil(text):
+        return default
+    import sys
+    return "Tamil Sangam MN" if sys.platform == "darwin" else "Nirmala UI"
 
 REVIEW_STATES = {"ready_for_review", "approved", "rejected", "exported"}
 
@@ -67,7 +85,8 @@ class ClipService:
             self.hub.publish("clip", c, notable=True)
 
     def get(self, clip_id: str) -> dict | None:
-        c = self.db.one("SELECT c.*, s.name AS streamer_name, s.slug AS streamer_slug, s.color AS streamer_color "
+        c = self.db.one("SELECT c.*, s.name AS streamer_name, s.slug AS streamer_slug, s.color AS streamer_color, "
+                        "s.facecam AS streamer_facecam "
                         "FROM clips c JOIN streamers s ON s.id=c.streamer_id WHERE c.id=?", (clip_id,))
         if not c:
             return None
@@ -82,6 +101,9 @@ class ClipService:
         if tr:
             tr["words"] = json.loads(tr["words"])
         c["transcript"] = tr
+        lp = c.get("layout_params") if isinstance(c.get("layout_params"), dict) else {}
+        sfc = json.loads(c["streamer_facecam"]) if c.get("streamer_facecam") else None
+        c["layout"] = effective_layout(c["layout"], lp, lp.get("facecam") or sfc)
         c["files"] = {k: bool(c.get(k) and Path(c[k]).exists())
                       for k in ("file_path", "thumb_path", "preview_path", "export_path", "cover_path")}
         return c
@@ -223,8 +245,12 @@ class ClipService:
         await asyncio.to_thread(run, [self.ctx.tools.ffmpeg, "-y", "-v", "error", "-i", clip["file_path"], "-vn", "-ac", "1",
                                       "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], 120)
         try:
+            st = self.db.one("SELECT language, caption_mode FROM streamers WHERE id=?", (clip["streamer_id"],)) or {}
             res = await asyncio.to_thread(self.transcriber.transcribe, str(wav), streamer_id=clip["streamer_id"],
-                                          session_id=clip["session_id"], clip_id=clip["id"])
+                                          session_id=clip["session_id"], clip_id=clip["id"], language=st.get("language"))
+            if res and is_tamil(res["text"]) and (st.get("caption_mode") or "tanglish") == "tanglish":
+                # Tamil speech -> Tanglish captions/titles: same words, same timings, English letters
+                res["words"], res["text"] = romanize_words(res["words"]), romanize_text(res["text"])
         except TranscriptionUnavailable as e:
             self.hub.warn("whisper", "warn", f"Transcription unavailable: {e}")
             res = None
@@ -488,22 +514,28 @@ class ClipService:
             tr = self.db.one("SELECT words FROM transcriptions WHERE clip_id=?", (clip["id"],))
             words = json.loads(tr["words"]) if tr else []
         facecam = lp.get("facecam") or (json.loads(streamer["facecam"]) if streamer["facecam"] else None)
-        # reel length rule: explicit segments > a user trim that already fits > auto best-moment cut
+        layout = effective_layout(clip["layout"], lp, facecam)
+        # reel length rule: the user's confirmed window (exactly that, never auto-cut) >
+        # explicit segments > a user trim that already fits > auto best-moment cut
         ts, te = clip["trim_start"] or 0.0, clip["trim_end"] or clip["duration"]
         segments = lp.get("segments")
-        if not segments and te - ts > rc.max_reel_s:
+        if lp.get("manual_window"):
+            segments = None
+            te = min(te, ts + rc.max_reel_s)
+        elif not segments and te - ts > rc.max_reel_s:
             from ..editing.highlight import best_reel_cut
             segments = best_reel_cut(words, clip["duration"], lp.get("peak"), rc.max_reel_s, lo=ts, hi=te,
                                      timeline=self.clip_timeline(clip))
         return RenderSpec(
             src=clip["file_path"], src_w=clip["width"] or 1920, src_h=clip["height"] or 1080, src_fps=clip["fps"] or 60,
-            duration=clip["duration"], out=str(out), layout=clip["layout"], trim_start=clip["trim_start"] or 0.0,
-            trim_end=clip["trim_end"], peak=lp.get("peak"), words=words, facecam=facecam, gameplay=lp.get("gameplay"),
+            duration=clip["duration"], out=str(out), layout=layout, trim_start=ts,
+            trim_end=te, peak=lp.get("peak"), words=words, facecam=facecam, gameplay=lp.get("gameplay"),
             segments=segments, title=clip.get("title"),
             caption_style=cs.get("style", rc.caption_style), caption_size=int(cs.get("size", rc.caption_size)),
             caption_y=float(cs.get("y", rc.caption_y)), caption_uppercase=bool(cs.get("uppercase", rc.caption_uppercase)),
             captions=bool(cs.get("enabled", True)), hook=bool(cs.get("hook", rc.hook_text_enabled)),
-            hook_seconds=rc.hook_seconds, font=cs.get("font", rc.caption_font), fonts_dir=rc.caption_fonts_dir,
+            hook_seconds=rc.hook_seconds, font=cs.get("font", _tamil_font(rc.caption_font, words, clip.get("title"))),
+            fonts_dir=rc.caption_fonts_dir,
             cold_open=bool(lp.get("cold_open", False)), punch_zoom=bool(lp.get("punch_zoom", True)),
             fps=int(cs.get("fps", rc.fps)), preview=preview, encoder=rc.encoder, nvenc_cq=rc.nvenc_cq, x264_crf=rc.x264_crf,
             max_bitrate_mbps=rc.max_bitrate_mbps, audio_bitrate_k=rc.audio_bitrate_k,

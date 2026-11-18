@@ -7,6 +7,7 @@ import { bytes, cn, CLIP_STATE, dur, METHOD_LABEL } from "@/lib/format";
 import { useStore } from "@/lib/store";
 import type { Clip, Layout, Rect, Word } from "@/lib/types";
 import { useAction } from "@/components/StreamPanel";
+import { ReelWindow, type ReelWin } from "@/components/ReelWindow";
 import { Badge, Button, Confirm, Field, inputCls, Slider, Switch, Tip } from "@/components/ui";
 
 const LAYOUTS: { id: Layout; label: string }[] = [
@@ -41,7 +42,22 @@ export function ClipEditor({ clip }: { clip: Clip }) {
   const cs = { style: cfg?.render?.caption_style ?? "bold_pop", size: cfg?.render?.caption_size ?? 80, y: cfg?.render?.caption_y ?? 0.66,
     uppercase: cfg?.render?.caption_uppercase ?? true, hook: cfg?.render?.hook_text_enabled ?? true, enabled: true, fps: cfg?.render?.fps ?? 60,
     ...(clip.caption_style ?? {}) };
-  const trim: [number, number] = [clip.trim_start ?? 0, clip.trim_end ?? D];
+  const maxReel = cfg?.render?.max_reel_s ?? 30;
+  const manual = !!(lp as any).manual_window;
+  const savedWin = (): ReelWin => {
+    const s0 = clip.trim_start ?? 0, e0 = clip.trim_end ?? D;
+    if (manual || e0 - s0 <= maxReel) return { s: s0, len: Math.min(maxReel, e0 - s0) };
+    const len = Math.min(maxReel, D);                       // default: the window around the hype peak
+    const s = Math.max(0, Math.min(D - len, (lp.peak ?? D / 2) - len * 0.4));
+    return { s, len };
+  };
+  const [win, setWin] = useState<ReelWin>(savedWin);
+  useEffect(() => setWin(savedWin()), [clip.id, clip.trim_start, clip.trim_end, manual]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const winDirty = !manual || Math.abs(win.s - (clip.trim_start ?? 0)) > 0.05 || Math.abs(win.s + win.len - (clip.trim_end ?? D)) > 0.05;
+  const saveWin = async () => {
+    useStore.getState().upsertClip(await api.patchClip(clip.id, {
+      trim_start: +win.s.toFixed(2), trim_end: +(win.s + win.len).toFixed(2), layout_params: { manual_window: true } as any }));
+  };
   const facecam: Rect | null = (lp.facecam as Rect) ?? null;
   const rendering = Object.values(jobs).some((j) => j.ref_id === clip.id && j.kind.startsWith("render") && (j.state === "running" || j.state === "queued"));
 
@@ -115,25 +131,11 @@ export function ClipEditor({ clip }: { clip: Clip }) {
           )}
         </div>
         {D > 0 && (
-          <section className="space-y-2 pb-2">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="font-display text-[28px] font-black leading-tight">Trim</h2>
-              <span className="font-mono text-[11px] text-ink-400">{(trim[1] - trim[0]).toFixed(1)}s
-                {(trim[1] - trim[0]) > (cfg?.render?.max_reel_s ?? 30) && <span className="ml-2 text-violet-400">Export auto-cuts to ≤{cfg?.render?.max_reel_s ?? 30}s</span>}</span>
-            </div>
-            <div className="flex items-center gap-3 font-mono text-xs">
-              <span className="border border-ink-500 px-2.5 py-1">{dur(trim[0])}</span>
-              <Slider value={trim} min={0} max={D} step={0.1} onChange={(v) => useStore.getState().upsertClip({ ...clip, trim_start: v[0], trim_end: v[1] })} label="Trim range" />
-              <span className="border border-ink-500 px-2.5 py-1">{dur(trim[1])}</span>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              <Button size="xs" onClick={() => patch({ trim_start: Math.min(t, trim[1] - 1) })}>Set in @ {dur(t)}</Button>
-              <Button size="xs" onClick={() => patch({ trim_end: Math.max(t, trim[0] + 1) })}>Set out @ {dur(t)}</Button>
-              <Button size="xs" variant="ghost" onClick={() => patch({ trim_start: trim[0], trim_end: trim[1] }, "Trim saved")}>Save trim</Button>
-              <Button size="xs" variant="ghost" onClick={() => patch({ trim_start: 0, trim_end: D })}>Reset</Button>
-              {lp.peak != null && <Button size="xs" variant="ghost" onClick={() => vref.current && (vref.current.currentTime = lp.peak!)}>Jump to peak ({dur(lp.peak)})</Button>}
-            </div>
-          </section>
+          <ReelWindow D={D} max={maxReel} win={win} onChange={setWin} saved={manual} dirty={winDirty} peak={lp.peak ?? null}
+            t={t} video={vref.current} words={words}
+            onSave={() => run("win", saveWin, `Reel window saved: ${dur(win.s)} → ${dur(win.s + win.len)}`)}
+            onAuto={() => run("win", async () => useStore.getState().upsertClip(await api.patchClip(clip.id, {
+              trim_start: 0, trim_end: D, layout_params: { manual_window: false } as any })), "AI will pick the best cut")} />
         )}
         {/* captions */}
         <section className="border-t border-ink-500 pt-3">
@@ -218,7 +220,7 @@ export function ClipEditor({ clip }: { clip: Clip }) {
           <Button size="lg" className="h-12 font-display text-xl font-black 2xl:h-16 2xl:text-[27px]" variant="secondary" disabled={!clip.files.file_path || rendering} loading={busy === "pv"} onClick={() => run("pv", () => api.renderPreview(clip.id), "Rendering preview")}>
             <Wand2 className="h-4 w-4" />Preview
           </Button>
-          <Button size="lg" className="h-12 font-display text-xl font-black 2xl:h-16 2xl:text-[27px]" variant="primary" disabled={!clip.files.file_path || rendering} loading={busy === "ex"} onClick={() => run("ex", () => api.exportClip(clip.id), "Export queued")}>
+          <Button size="lg" className="h-12 font-display text-xl font-black 2xl:h-16 2xl:text-[27px]" variant="primary" disabled={!clip.files.file_path || rendering} loading={busy === "ex"} onClick={() => run("ex", async () => { if (manual && winDirty) await saveWin(); return api.exportClip(clip.id); }, "Export queued")}>
             {rendering ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Export 1080×1920
           </Button>
         </div>

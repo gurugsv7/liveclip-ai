@@ -44,6 +44,8 @@ class PatchStream(BaseModel):
     facecam: dict | None = None
     default_layout: Literal["smart_crop", "facecam", "letterbox"] | None = None
     usage_notes: str | None = Field(None, max_length=1000)
+    language: Literal["en", "ta", "auto"] | None = None
+    caption_mode: Literal["tanglish", "native"] | None = None
     clear_facecam: bool = False
 
 
@@ -408,6 +410,13 @@ def create_app(ctx: AppContext | None = None, serve_frontend: bool = True) -> Fa
             for w in f["caption_words"]:
                 if not isinstance(w.get("text"), str) or not (0 <= float(w["start"]) <= float(w["end"])):
                     raise HTTPException(422, "caption words need text/start/end")
+        if "layout" in f:      # an explicit choice in the editor is kept (no automatic facecam switch)
+            f["layout_params"] = {**f.get("layout_params", {}), "layout_locked": True}
+        if f.get("layout_params", {}).get("manual_window"):
+            ts = f.get("trim_start", c["trim_start"] or 0)
+            te = f.get("trim_end", c["trim_end"] or dur)
+            if te - ts > C().config.render.max_reel_s + 0.05:
+                raise HTTPException(422, f"Reel window must be ≤ {C().config.render.max_reel_s:.0f}s")
         if "layout_params" in f:
             f["layout_params"] = {**(c.get("layout_params") or {}), **f["layout_params"]}
         C().clips.update(cid, **f)

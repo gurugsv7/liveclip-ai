@@ -86,6 +86,8 @@ class DetectionConfig(BaseModel):
         "lmao", "lol", "lmfao", "wtf", "no way", "bro", "crazy", "clip it", "clip that",
         "omg", "insane", "holy", "w ", "kekw", "omegalul", "lul", "💀", "😂", "🤣", "pog",
         "poggers", "monkas", "sheesh", "what", "nah", "dead", "help",
+        # Tamil chat (Tanglish)
+        "semma", "vera level", "mass", "aiyo", "ayyo", "dei", "thala", "kadavule", "mudiyala",
     ]
     laugh_tokens: list[str] = [
         "lmao", "lmfao", "lol", "kekw", "omegalul", "lul", "haha", "hahaha", "😂", "🤣",
@@ -97,7 +99,10 @@ class AIConfig(BaseModel):
     whisper_model: str = "small"
     whisper_device: Literal["auto", "cuda", "cpu"] = "auto"
     whisper_compute_type: str = "auto"  # auto -> float16 on cuda, int8 on cpu
-    language: str = "en"
+    language: str = "en"                 # default; each streamer can override (en | ta | auto)
+    # clip transcripts for these languages use a bigger model *if it is already downloaded*
+    # (scripts/download-model). Live speech always uses `whisper_model` for speed.
+    language_models: dict[str, str] = {"ta": "large-v3"}
     ollama_enabled: bool = False
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "llama3.2:3b"
