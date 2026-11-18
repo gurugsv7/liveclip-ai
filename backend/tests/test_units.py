@@ -578,3 +578,36 @@ def test_posix_process_flags_lower_render_priority(monkeypatch):
     low, normal = media.popen_flags("low"), media.popen_flags("normal")
     assert low["start_new_session"] and callable(low["preexec_fn"])       # renders are niced
     assert normal == {"start_new_session": True}                           # capture is not slowed down
+
+
+# ---------------------------------------------------------------- cover + post caption
+def test_cover_scoring_prefers_a_sharp_face_frame_near_the_peak_without_half_captions():
+    import cv2
+    from liveclip.editing.cover import SH, SW, score_frames
+    rng = np.random.default_rng(3)
+    sharp = (rng.random((SH, SW, 3)) * 255).astype(np.uint8)
+    blurry = cv2.GaussianBlur(sharp, (31, 31), 0)
+    black = np.zeros((SH, SW, 3), np.uint8)
+    frames = np.stack([black, blurry, sharp, sharp, sharp])
+    times = [0.1, 5.0, 10.0, 12.0, 20.0]
+    words = [{"text": "no", "start": 9.8, "end": 10.2}]            # a caption word is on screen at 10.0
+    s = score_frames(frames, times, 25.0, peak=12.0, words=words, cuts=[20.0])
+    assert int(np.argmax(s)) == 3                                    # sharp, at the peak, no caption, not a cut
+    assert s[0] < 0 and s[1] < s[3] and s[2] < s[3] and s[4] < s[3]
+
+
+def test_post_caption_uses_only_real_words_credit_and_few_hashtags():
+    from liveclip.editing.cover import post_caption
+
+    def ws(t, phrase):
+        return [{"text": w, "start": round(t + i * 0.3, 2), "end": round(t + i * 0.3 + 0.25, 2)} for i, w in enumerate(phrase.split())]
+    words = ws(0, "Wait wait wait.") + ws(3, "No way he actually did that bro!") + ws(7, "I already lost the whole thing.")
+    cap = post_caption(streamer="xQc", platform="twitch", url="https://www.twitch.tv/xqc",
+                       hook="I already lost the whole thing", words=words)
+    lines = cap.strip().splitlines()
+    assert lines[0] == "I already lost the whole thing 😳"
+    assert "“No way he actually did that bro!”" in cap                # a second real line, not the hook again
+    assert "🎥 xQc live on Twitch: https://www.twitch.tv/xqc" in cap
+    tags = lines[-1].split()
+    assert 3 <= len(tags) <= 5 and all(t.startswith("#") and t == t.lower() for t in tags) and "#xqc" in tags
+    assert sum(ch in "😂😳🔥" for ch in lines[0]) == 1

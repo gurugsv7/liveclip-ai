@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS streamers (
   priority INTEGER NOT NULL DEFAULT 2,
   color TEXT NOT NULL DEFAULT '#8b5cf6',
   ai_enabled INTEGER NOT NULL DEFAULT 1,
+  monitoring INTEGER NOT NULL DEFAULT 0,  -- user wants it captured; resumed after an app restart
   facecam TEXT,              -- JSON {x,y,w,h} normalized 0..1
   default_layout TEXT NOT NULL DEFAULT 'smart_crop',
   usage_notes TEXT NOT NULL DEFAULT '',
@@ -150,6 +151,8 @@ CREATE TABLE IF NOT EXISTS clips (
   caption_style TEXT,
   trim_start REAL NOT NULL DEFAULT 0, trim_end REAL,
   preview_path TEXT, export_path TEXT,
+  cover_path TEXT,          -- best frame of the exported reel + hook
+  post_caption TEXT,        -- ready-to-paste caption + hashtags
   publish_status TEXT,
   error TEXT,
   created_at REAL NOT NULL, updated_at REAL NOT NULL
@@ -217,7 +220,18 @@ class Database:
                 self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(SCHEMA)
+            self._migrate()
             self._conn.execute("PRAGMA foreign_keys=ON")
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was created (CREATE TABLE IF NOT EXISTS skips them)."""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(streamers)")}
+        if "monitoring" not in cols:
+            self._conn.execute("ALTER TABLE streamers ADD COLUMN monitoring INTEGER NOT NULL DEFAULT 0")
+        ccols = {r[1] for r in self._conn.execute("PRAGMA table_info(clips)")}
+        for col in ("cover_path", "post_caption"):
+            if ccols and col not in ccols:
+                self._conn.execute(f"ALTER TABLE clips ADD COLUMN {col} TEXT")
 
     def close(self) -> None:
         with self._lock:

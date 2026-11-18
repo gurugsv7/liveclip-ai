@@ -10,9 +10,14 @@ Lifecycle of a candidate:
   finalize -> once the reaction has cooled (score < release for `cool_s`) or
               the max wait elapsed, final clip boundaries are computed.
 Triggers inside `cooldown_s` after a finalized candidate are suppressed.
+
+Besides one hot instant, a *sustained build* also triggers: the score stays moderately high
+for most of `sustain_window_s` while chat runs above its normal pace (a long rant/yell with an
+engaged chat never spikes, so the instant rule missed it — real xqc case at 8:37-8:51).
 """
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -49,6 +54,11 @@ class HypeParams:
     single_signal_factor: float = 0.85
     chat_delay_s: float = 3.0
     w_speech_boost: float = 0.2
+    sustain_window_s: float = 10.0
+    sustain_score: float = 0.30      # combined score held at/above this ...
+    sustain_frac: float = 0.8        # ... for this share of the window
+    sustain_chat_z: float = 1.5      # and chat this far above normal ...
+    sustain_chat_frac: float = 0.5   # ... for this share of the window (chat is required)
 
 
 class HypeDetector:
@@ -66,6 +76,7 @@ class HypeDetector:
         self.suppressed = 0
         self.last_score = 0.0
         self.enabled = True
+        self._recent: deque[tuple[float, float, float | None, float]] = deque()   # (t, score, chat z, event t)
 
     def combine(self, audio: float, chat: float | None, speech: float = 0.0) -> float:
         f = self.p.single_signal_factor
@@ -94,6 +105,10 @@ class HypeDetector:
              speech_peak_t: float | None = None) -> float:
         score = min(1.0, self.combine(audio, chat, speech))
         self.last_score = score
+        chat_z = ((extra or {}).get("chat") or {}).get("z") if chat is not None else None
+        self._recent.append((t, score, chat_z, self._event_time(t, audio, audio_peak_t, chat, speech, speech_peak_t)))
+        while self._recent and self._recent[0][0] < t - self.p.sustain_window_s:
+            self._recent.popleft()
         if not self.enabled:
             if self.open:
                 self._finalize(t)
@@ -114,15 +129,30 @@ class HypeDetector:
             if (t - c.t_last_hot >= self.p.cool_s) or (t - c.t_event >= self.p.max_wait_s):
                 self._finalize(t)
             return score
-        if score >= self.p.trigger and baseline_s >= self.p.min_baseline_s:
+        sustained = self._sustained(t)
+        if (score >= self.p.trigger or sustained) and baseline_s >= self.p.min_baseline_s:
             if t - self.last_final_end < self.p.cooldown_s:
                 self.suppressed += 1
                 return score
             ev_t = self._event_time(t, audio, audio_peak_t, chat, speech, speech_peak_t)
-            c = Candidate(self.new_id(), ev_t, t, t, score, audio, chat or 0.0, speech=speech, signals=dict(extra or {}))
+            sig = dict(extra or {})
+            if sustained and score < self.p.trigger:
+                best = max(self._recent, key=lambda r: r[1])          # strongest point of the build
+                ev_t = best[3]
+                sig["sustained"] = {"window_s": self.p.sustain_window_s, "peak": round(best[1], 3)}
+            c = Candidate(self.new_id(), ev_t, t, t, score, audio, chat or 0.0, speech=speech, signals=sig)
             self.open = c
             self.on_trigger(c, *self._protect_range(c))
         return score
+
+    def _sustained(self, t: float) -> bool:
+        r = self._recent
+        if not r or t - r[0][0] < self.p.sustain_window_s * 0.9:
+            return False                        # need (nearly) a full window of history
+        n = len(r)
+        hot = sum(1 for x in r if x[1] >= self.p.sustain_score)
+        crowd = sum(1 for x in r if x[2] is not None and x[2] >= self.p.sustain_chat_z)
+        return hot >= self.p.sustain_frac * n and crowd >= self.p.sustain_chat_frac * n
 
     def _protect_range(self, c: Candidate) -> tuple[float, float]:
         return max(0.0, c.t_event - self.p.pre_s), c.t_event + self.p.post_s + self.p.max_wait_s

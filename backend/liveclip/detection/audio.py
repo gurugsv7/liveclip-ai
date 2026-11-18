@@ -18,6 +18,10 @@ SR = 16000
 FRAME = SR // 10  # 100 ms
 SILENCE_DB = -65.0          # 1 s loudness at/below this = silence (muted, BRB, ad gap)
 MIN_VOICED_BASELINE = 20    # voiced seconds needed before audio excitement is scored
+# A reaction is sustained: full credit needs this many 100 ms frames of clearly-loud audio
+# within +-2 s of the peak. A lone bang/thud/door slam/mic bump (real case: one 0.5 s hit in a
+# bodycam video xqc was watching scored "audio 0.90") gets partial credit only.
+SUSTAIN_FRAMES = 8
 
 
 @dataclass
@@ -162,6 +166,9 @@ class AudioAnalyzer:
         was_talking = bool(earlier) and sum(d > SILENCE_DB for d in earlier) >= 0.5 * len(earlier)
         if before and was_talking and np.mean(before) < med - 8 and best > med + 6:
             score = min(1.0, score + 0.2)
+        loud = med + 1.5 * mad
+        n_loud = sum(1 for f in self.frames if abs(f.t - best_t) <= 2.0 and f.rms_db >= loud)
+        score *= min(1.0, max(0.0, (n_loud - 1) / (SUSTAIN_FRAMES - 1)))
         return score, best_t
 
     def excitement(self, t_end: float | None = None, window: float = 2.0) -> tuple[float, float]:

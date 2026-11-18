@@ -157,7 +157,8 @@ class PublishingConfig(BaseModel):
 
 
 class AudioMonitorConfig(BaseModel):
-    allow_multi: bool = False
+    # hear several streams at once (each has its own volume bar); off = clicking one mutes the rest
+    allow_multi: bool = True
 
 
 class AppConfig(BaseModel):
@@ -169,6 +170,8 @@ class AppConfig(BaseModel):
     render: RenderConfig = RenderConfig()
     publishing: PublishingConfig = PublishingConfig()
     audio_monitor: AudioMonitorConfig = AudioMonitorConfig()
+    # after a restart/crash/reboot, start again every stream that was being monitored when the app stopped
+    resume_monitoring: bool = True
     # Allows `local:` fixture sources. Off by default; tests and demos enable it.
     allow_local_sources: bool = False
     shortcuts: dict[str, str] = {

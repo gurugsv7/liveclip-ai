@@ -378,6 +378,24 @@ class StreamManager:
         self.ctx.db.update("streamers", "id", sid, f)
         return self.get_streamer(sid)
 
+    def move_streamer(self, sid: str, slot: int) -> list[dict]:
+        """Move a stream to dashboard slot 0-3; a stream already there swaps into the old slot.
+        Only the on-screen position changes; capture, sessions and files are untouched."""
+        if not 0 <= slot <= 3:
+            raise ValueError("slot must be 0-3")
+        me = self.get_streamer(sid)
+        if not me or me["slot"] > 3:
+            raise KeyError(f"unknown stream {sid}")
+        old = me["slot"]
+        with self.ctx.db.transaction() as db:
+            other = db._conn.execute("SELECT id FROM streamers WHERE slot=? AND id<>?", (slot, sid)).fetchone()
+            if other:
+                db._conn.execute("UPDATE streamers SET slot=? WHERE id=?", (old, other[0]))
+            db._conn.execute("UPDATE streamers SET slot=? WHERE id=?", (slot, sid))
+        for live in self.sessions.values():          # keep cached rows in step (capture priority tiebreak)
+            live.streamer["slot"] = self.get_streamer(live.streamer["id"])["slot"]
+        return self.list_streamers()
+
     async def remove_streamer(self, sid: str) -> None:
         await self.stop(sid)
         # Clips are kept: re-parent is impossible (FK), so we keep the streamer row
@@ -426,13 +444,30 @@ class StreamManager:
         live.chat_client.start()
         if live.viewer_clips:
             live.viewer_clips.start()
+        self.ctx.db.execute("UPDATE streamers SET monitoring=1 WHERE id=?", (streamer_id,))
         self.ctx.hub.publish("session_started", live.status(), notable=True)
         return live.status()
 
-    async def stop(self, streamer_id: str) -> None:
+    async def resume_monitoring(self) -> dict[str, str]:
+        """Start again every stream that was being monitored when the app last stopped.
+        One stream failing to start never blocks the others."""
+        out: dict[str, str] = {}
+        rows = self.ctx.db.all("SELECT id FROM streamers WHERE monitoring=1 AND priority<99 ORDER BY slot")
+        for r in rows:
+            try:
+                await self.start(r["id"])
+                out[r["id"]] = "resumed"
+            except Exception as e:  # noqa: BLE001 - keep going; the stream shows its own error
+                out[r["id"]] = str(e)
+                self.ctx.hub.warn(f"resume:{r['id']}", "warn", f"Couldn't resume monitoring: {e}")
+        return out
+
+    async def stop(self, streamer_id: str, *, user: bool = True) -> None:
         """Stop policy: an open hype candidate is finalized with the footage
         already captured; queued extractions continue from the existing
         segments (they stay protected); unprotected segments are then removed."""
+        if user:  # an app shutdown keeps the flag so the stream resumes on next start
+            self.ctx.db.execute("UPDATE streamers SET monitoring=0 WHERE id=?", (streamer_id,))
         live = self.sessions.pop(streamer_id, None)
         if not live:
             return
@@ -519,7 +554,7 @@ class StreamManager:
         for t in self._tasks:
             t.cancel()
         for sid in list(self.sessions):
-            await self.stop(sid)
+            await self.stop(sid, user=False)
 
     async def _detect_loop(self) -> None:
         while True:

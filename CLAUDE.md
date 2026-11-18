@@ -17,6 +17,14 @@ Setup/run/test: `scripts\setup.ps1`, `scripts\start.ps1`, `scripts\stop.ps1`, `s
   gameplay so they don't cover the action.
 - Prefer the facecam layout (face on top, gameplay pinned below) when the stream has a
   facecam; pin the gameplay region (e.g. a chess board) instead of chasing the streamer's head.
+- **Every export (and Approve, which exports) ships a post kit** next to the MP4
+  (`editing/cover.py`): `.cover.jpg` and `.caption.txt`.
+  - Cover = a real frame, never generated. With a facecam: the streamer's own face (inside the
+    facecam rect, sharp, lit, nearest the peak) in the facecam layout, hook on the face/content
+    seam. Faces elsewhere (YouTube thumbnails, people in a watched video) don't count. No facecam:
+    the sharpest well-lit frame near the peak with no half-shown caption word.
+  - Caption = hook line + ≤1 emoji, one more line the streamer really said, a credit line
+    (`🎥 <streamer> live on <Platform>: <url>`, it's their footage), 3–5 lowercase hashtags.
 
 ## Detection rules (don't miss moments, don't fill the disk)
 Signals, all relative to *that* streamer's own normal and all local/free:
@@ -34,6 +42,18 @@ Any single very strong signal can trigger; weak partners are "no evidence", not 
 **Loudness only counts when a human is voicing** (YAMNet voice ≥ 0.35): game audio (gunfire,
 footsteps, R6 breaching) is never "excitement". Applause/cheering are NOT reactions in games
 (real case: R6 sound tagged "Applause 0.80" while the streamer sat silent).
+**Loudness must be sustained**: full credit needs ≥ 0.8 s of clearly-loud audio within ±2 s of
+the peak (`SUSTAIN_FRAMES`). A lone bang/thud/mic bump is not a reaction (real case: xqc watching
+a bodycam video, one 0.5 s thud scored "audio 0.90" → a clip with nothing in it).
+**A busy chat that stays quiet is evidence against**: if chat normally runs ≥ 1 msg/s and did not
+rise (z ≤ 0.5, also checked over the whole clip since chat lags), it is NOT dropped as
+"no evidence" — the clip goes to Maybe. Slow chats (< 1 msg/s) still count as no evidence.
+Reaction/watch-party content: voices and sounds in the watched video are not the streamer;
+trust chat more than loudness there.
+**Sustained builds trigger too** (`detection/hype.py` `_sustained`): combined score ≥ 0.30 for
+80% of 10 s *and* chat z ≥ 1.5 for half of it. A long rant/yell with an engaged chat never
+spikes past 0.62 (real xqc miss at 8:37–8:51: +9 dB for 15 s, chat 15 msg/s). Chat is required,
+so a long loud stretch of a game or watched video alone can't trigger it.
 
 ### Reel cutting (editing/highlight.py)
 - Use both timelines: Whisper words *and* YAMNet voice. Raging/yelling is often garbled, so

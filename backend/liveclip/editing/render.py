@@ -281,6 +281,6 @@ def render(spec: RenderSpec, ffmpeg: str, temp_root: Path, progress=None) -> dic
             hf = out.with_suffix(".transcript.json")
             hf.write_text(hyperframes_transcript(words_out), encoding="utf-8")
             side = {"srt": str(srt), "transcript": str(hf)}
-        return {"path": str(out), "duration": out_dur, "pieces": pieces, "crop_keys": crop_keys, **side}
+        return {"path": str(out), "duration": out_dur, "pieces": pieces, "crop_keys": crop_keys, "words": words_out, **side}
     finally:
         shutil.rmtree(work, ignore_errors=True)

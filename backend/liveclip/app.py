@@ -47,6 +47,10 @@ class PatchStream(BaseModel):
     clear_facecam: bool = False
 
 
+class MoveStream(BaseModel):
+    slot: int = Field(..., ge=0, le=3)
+
+
 class ReplaceStream(BaseModel):
     url: str = Field(..., max_length=400)
     name: str | None = Field(None, max_length=60)
@@ -104,6 +108,10 @@ def create_app(ctx: AppContext | None = None, serve_frontend: bool = True) -> Fa
         c.manager.start_loops()
         c.resources.start()
         await c.clips.resume_pending()
+        if c.config.resume_monitoring:
+            resumed = await c.manager.resume_monitoring()
+            if resumed:
+                c.hub.publish("monitoring_resumed", resumed, notable=True)
         await c.semantic.check()
         sweeper = asyncio.create_task(_sweep_loop(c))
         if not c.tools.ffmpeg:
@@ -229,6 +237,14 @@ def create_app(ctx: AppContext | None = None, serve_frontend: bool = True) -> Fa
         except (ValueError, KeyError) as e:
             err(e)
         return stream_view(s)
+
+    @app.post("/api/streams/{sid}/move", tags=["streams"])
+    def move_stream(sid: str, req: MoveStream):
+        try:
+            rows = C().manager.move_streamer(sid, req.slot)
+        except (ValueError, KeyError) as e:
+            err(e)
+        return [stream_view(r) for r in rows if r["priority"] < 99]
 
     @app.delete("/api/streams/{sid}", tags=["streams"])
     async def delete_stream(sid: str):
@@ -399,8 +415,14 @@ def create_app(ctx: AppContext | None = None, serve_frontend: bool = True) -> Fa
 
     @app.post("/api/clips/{cid}/approve", tags=["clips"])
     def approve(cid: str):
+        """Approving a clip also exports it (reel + cover + post caption)."""
         C().clips.update(cid, status="approved")
-        return C().clips.get(cid)
+        c = C().clips.get(cid)
+        if c and c["files"]["file_path"] and c.get("export_status") not in ("queued", "rendering"):
+            C().clips.update(cid, export_status="queued")
+            C().jobs.enqueue("render_export", cid, session_id=c["session_id"], streamer_id=c["streamer_id"])
+            c = C().clips.get(cid)
+        return c
 
     @app.post("/api/clips/{cid}/reject", tags=["clips"])
     def reject(cid: str):
@@ -568,12 +590,12 @@ def create_app(ctx: AppContext | None = None, serve_frontend: bool = True) -> Fa
         return FileResponse(row["path"], media_type="video/mp2t", headers={"Cache-Control": "no-store"})
 
     @app.get("/media/clips/{cid}/{kind}", tags=["media"])
-    def clip_media(cid: str, kind: Literal["source", "preview", "export", "thumb", "srt"]):
+    def clip_media(cid: str, kind: Literal["source", "preview", "export", "thumb", "srt", "cover"]):
         c = C().clips.get(cid)
         if not c:
             raise HTTPException(404)
         key = {"source": "file_path", "preview": "preview_path", "export": "export_path", "thumb": "thumb_path",
-               "srt": "export_path"}[kind]
+               "srt": "export_path", "cover": "cover_path"}[kind]
         p = c.get(key)
         if kind == "srt" and p:
             p = str(Path(p).with_suffix(".srt"))
@@ -582,8 +604,8 @@ def create_app(ctx: AppContext | None = None, serve_frontend: bool = True) -> Fa
         root = C().paths.data.resolve()
         if root not in Path(p).resolve().parents:
             raise HTTPException(403)
-        mt = {"thumb": "image/jpeg", "srt": "text/plain"}.get(kind, "video/mp4")
-        return FileResponse(p, media_type=mt, filename=Path(p).name if kind in ("export", "srt") else None)
+        mt = {"thumb": "image/jpeg", "cover": "image/jpeg", "srt": "text/plain"}.get(kind, "video/mp4")
+        return FileResponse(p, media_type=mt, filename=Path(p).name if kind in ("export", "srt", "cover") else None)
 
     # ------------------------------------------------------------ websocket
     @app.websocket("/ws")

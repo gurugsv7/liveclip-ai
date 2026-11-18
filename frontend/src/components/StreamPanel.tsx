@@ -1,5 +1,5 @@
 import {
-  Bot, BotOff, ChevronDown, Expand, MessageSquare, MoreHorizontal, Pause, Play, Plus, Power, RefreshCw,
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bot, BotOff, ChevronDown, Expand, GripVertical, MoreHorizontal, Pause, Play, Plus, Power, RefreshCw,
   Shrink, Trash2, Volume2, VolumeX,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -8,7 +8,7 @@ import { bytes, cn, dur, qualityLabel, STATE_LABEL } from "@/lib/format";
 import { useStore } from "@/lib/store";
 import type { Streamer } from "@/lib/types";
 import { HlsPlayer } from "./HlsPlayer";
-import { Badge, Button, Confirm, Dialog, Field, IconBtn, inputCls, Meter, PlatformIcon, Tip } from "./ui";
+import { Badge, Button, Confirm, Dialog, Field, IconBtn, inputCls, Meter, PlatformIcon, Slider, Tip } from "./ui";
 
 const STATE_TONE: Record<string, string> = {
   live: "border-volt-500 bg-volt-500 text-white",
@@ -20,6 +20,10 @@ const STATE_TONE: Record<string, string> = {
   error: "bg-live/10 text-live border-live/30",
   stopped: "bg-ink-700/50 text-ink-300 border-ink-600",
 };
+
+/** Detail readouts (meters, buffer, REC timer) stay hidden until you hover or focus the panel;
+ *  always shown on touch screens, which can't hover. */
+const REVEAL = "opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100";
 
 export function useAction() {
   const toast = useStore((s) => s.toast);
@@ -89,12 +93,16 @@ function BufferBar({ streamer }: { streamer: Streamer }) {
   );
 }
 
-export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid }: {
+export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid, onMove, dragging, onDragStart, onDragEnd }: {
   streamer: Streamer; selected: boolean; onSelect: () => void; onReplace: (s: Streamer) => void; fitGrid?: boolean;
+  /** move to another dashboard slot (grid view only) */
+  onMove?: (slot: number) => void; dragging?: boolean; onDragStart?: () => void; onDragEnd?: () => void;
 }) {
   const live = useStore((s) => s.live[streamer.id]);
   const meters = useStore((s) => s.meters[streamer.id]);
   const audible = useStore((s) => s.audible.includes(streamer.id));
+  const volume = useStore((s) => s.volumes[streamer.id] ?? 1);
+  const setVolume = useStore((s) => s.setVolume);
   const allowMulti = useStore((s) => !!s.config?.audio_monitor?.allow_multi);
   const toggleAudio = useStore((s) => s.toggleAudio);
   const expanded = useStore((s) => s.expanded === streamer.id);
@@ -137,10 +145,14 @@ export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid }
   return (
     <div onMouseDown={onSelect}
       className={cn("group relative flex h-full min-w-0 flex-col border bg-ink-900",
-        selected || hot ? "border-violet-500" : "border-ink-500")}
+        selected || hot ? "border-violet-500" : "border-ink-500", dragging && "opacity-40")}
       data-testid={`panel-${streamer.slot}`}>
       {/* header */}
-      <div className="flex min-h-8 shrink-0 items-center gap-2 px-2">
+      <div className={cn("flex min-h-8 shrink-0 items-center gap-2 px-2", onMove && "cursor-grab active:cursor-grabbing")}
+        draggable={!!onMove} title={onMove ? "Drag to move this stream" : undefined}
+        onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, streamer.id); e.dataTransfer.effectAllowed = "move"; onDragStart?.(); }}
+        onDragEnd={() => onDragEnd?.()}>
+        {onMove && <GripVertical className={cn("-mx-1 h-4 w-4 shrink-0 text-ink-400", REVEAL)} aria-hidden />}
         <span className="border border-ink-500 px-1.5 font-mono text-sm font-semibold">{String(streamer.slot + 1).padStart(2, "0")}</span>
         <PlatformIcon platform={streamer.platform} />
         <div className="min-w-0 flex-1 truncate font-mono text-sm font-semibold tracking-tight xl:text-base">{streamer.name}</div>
@@ -156,13 +168,13 @@ export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid }
           </Tip>
         )}
         {live?.measured_kbps != null && (
-          <span className="tabular hidden font-mono text-[10px] text-ink-400 xl:inline">{(live.measured_kbps / 1000).toFixed(1)} Mbps</span>
+          <span className={cn("tabular hidden font-mono text-[10px] text-ink-400 xl:inline", REVEAL)}>{(live.measured_kbps / 1000).toFixed(1)} Mbps</span>
         )}
       </div>
 
       {/* video */}
       <div className={cn("media-well relative flex-1 overflow-hidden border-t border-ink-500", expanded ? "aspect-video min-h-44" : src ? "aspect-[2.16] min-h-36" : "aspect-[2.9] min-h-36", fitGrid && "lg:aspect-auto lg:min-h-0")}>
-        <HlsPlayer src={src} muted={!audible} paused={paused} className="absolute inset-0"
+        <HlsPlayer src={src} muted={!audible} volume={volume} paused={paused} className="absolute inset-0"
           onLatency={(l) => useStore.setState((s) => ({ latency: { ...s.latency, [streamer.id]: l } }))} />
         {!live && (
           <div className="media-well unassigned-well absolute inset-0 grid place-items-center">
@@ -186,23 +198,22 @@ export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid }
         )}
         {/* overlays */}
         {live && (
-          <div className="pointer-events-none absolute left-2 top-2 flex items-center gap-1.5">
+          <div className={cn("pointer-events-none absolute left-2 top-2 flex items-center gap-1.5", REVEAL)}>
             {isLive && <span className="bg-black/80 px-1.5 py-0.5 font-mono text-[10px]"><span className="text-red-400">●</span> REC {dur(live.recording_s)}</span>}
             {latency > 0 && <span className="bg-black/80 px-1.5 py-0.5 font-mono text-[10px]">−{latency.toFixed(1)}s</span>}
             {paused && <span className="bg-black/80 px-1.5 py-0.5 text-[10px] text-amber-200">Preview paused · capture running</span>}
           </div>
         )}
         {live && (
-          <div className="pointer-events-none absolute right-2 top-2 flex items-center gap-1.5">
+          <div className={cn("pointer-events-none absolute right-2 top-2 flex items-center gap-1.5", !(meters?.open || pending > 0) && REVEAL)}>
             <span className={cn("flex items-center gap-1 bg-black/80 px-1.5 py-0.5 text-[10px]", aiOn ? "text-lime-200" : "text-stone-300")}>
               {aiOn ? <Bot className="h-3 w-3" /> : <BotOff className="h-3 w-3" />} {aiOn ? (meters?.open ? "Candidate open" : "AI watching") : "AI off"}
             </span>
             {pending > 0 && <span className="rounded bg-violet-500/80 px-1.5 py-0.5 text-[10px] text-white">{pending} clip{pending > 1 ? "s" : ""} processing</span>}
           </div>
         )}
-      </div>
-
-      {live && (
+        {live && (
+          <div className={cn("pointer-events-none absolute inset-x-0 bottom-0 group-hover:pointer-events-auto group-focus-within:pointer-events-auto [@media(hover:none)]:pointer-events-auto", REVEAL)}>
         <div className="media-well signal-strip grid grid-cols-4 divide-x divide-[#524f45] border-t border-[#524f45]">
           <Signal label="Audio" value={meters?.audio ?? 0} readout={meters?.level_db == null ? "—" : `${Math.round(meters.level_db)} dB`}
             detail={`Loudness vs. ${streamer.name}'s baseline${meters?.sound_top ? ` · hears ${meters.sound_top}` : ""}${meters?.reaction ? ` · reaction ${Math.round(meters.reaction * 100)}` : ""}${(meters?.game_noise ?? 0) >= 0.35 ? " · game noise discounted" : ""}`} />
@@ -212,8 +223,10 @@ export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid }
             detail={meters?.speech_text ? `Whisper heard "${meters.speech_text.slice(-90)}"` : "Excited speech from live transcription"} />
           <Signal label="Hype" value={score} readout={`${Math.round(score * 100)}/100`} detail="Combined hype score" peak={hot} />
         </div>
-      )}
-      <BufferBar streamer={streamer} />
+        <BufferBar streamer={streamer} />
+          </div>
+        )}
+      </div>
 
       {/* controls */}
       <div className="stream-controls flex shrink-0 flex-wrap items-center gap-1 border-t border-ink-500 px-2 py-1.5 font-mono xl:gap-2" ref={menuRef}>
@@ -242,17 +255,17 @@ export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid }
           {paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
         </IconBtn>
         <div className="flex-1" />
-        {live && (
-          <Tip label={`Chat: ${live.chat.status}${live.chat.detail ? ` — ${live.chat.detail}` : ""}`}>
-            <span className={cn("hidden items-center gap-1 font-mono text-[10px] 2xl:flex", live.chat.status === "connected" ? "text-volt-400" : "text-ink-500")}>
-              <MessageSquare className="h-3 w-3" />{meters?.chat_rate != null && live.chat.status === "connected" ? `${meters.chat_rate}/s` : "—"}
-            </span>
-          </Tip>
-        )}
         <IconBtn label={audible ? "Mute dashboard audio (M)" : allowMulti ? "Add to audible streams" : "Listen to this stream only (M)"} active={audible} tone="volt"
           onClick={(e) => { e.stopPropagation(); toggleAudio(streamer.id, allowMulti); }} disabled={!src} data-testid="audio-btn">
           {audible ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
         </IconBtn>
+        <Tip label={`${streamer.name} volume ${Math.round(volume * 100)}%`}>
+          <div className={cn("w-16 xl:w-20", !audible && REVEAL)} onMouseDown={(e) => e.stopPropagation()}>
+            <Slider value={[Math.round(volume * 100)]} min={0} max={100} step={5} label={`${streamer.name} volume`}
+              className={cn(!src && "pointer-events-none opacity-40")}
+              onChange={([v]) => setVolume(streamer.id, v / 100, allowMulti)} />
+          </div>
+        </Tip>
         <IconBtn label={expanded ? "Back to grid (E)" : "Expand (E)"} onClick={() => setS({ expanded: expanded ? null : streamer.id })}>
           {expanded ? <Shrink className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
         </IconBtn>
@@ -261,6 +274,12 @@ export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid }
           {menu && (
             <div className="absolute bottom-full right-0 z-20 mb-1 w-48 rounded-lg border border-ink-600 bg-ink-800 p-1 text-xs shadow-xl animate-slideIn">
               <MenuItem icon={<Trash2 className="h-3.5 w-3.5" />} disabled={!live} onClick={() => { setMenu(false); setConfirmDel(true); }}>Delete buffer…</MenuItem>
+              {onMove && MOVES.map(({ dir, icon, to }) => {
+                const target = to(streamer.slot);
+                return target == null ? null : (
+                  <MenuItem key={dir} icon={icon} onClick={() => { setMenu(false); onMove(target); }}>Move {dir}</MenuItem>
+                );
+              })}
               <MenuItem icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={() => { setMenu(false); onReplace(streamer); }}>Replace stream…</MenuItem>
               {live ? (
                 <MenuItem icon={<Power className="h-3.5 w-3.5" />} danger onClick={() => { setMenu(false); setConfirmStop(true); }}>Stop monitoring</MenuItem>
@@ -285,6 +304,16 @@ export function StreamPanel({ streamer, selected, onSelect, onReplace, fitGrid }
     </div>
   );
 }
+
+export const DRAG_TYPE = "application/x-liveclip-stream";
+
+/** 2x2 grid: slots 0 1 / 2 3 */
+const MOVES: { dir: string; icon: React.ReactNode; to: (s: number) => number | null }[] = [
+  { dir: "left", icon: <ArrowLeft className="h-3.5 w-3.5" />, to: (s) => (s % 2 === 1 ? s - 1 : null) },
+  { dir: "right", icon: <ArrowRight className="h-3.5 w-3.5" />, to: (s) => (s % 2 === 0 ? s + 1 : null) },
+  { dir: "up", icon: <ArrowUp className="h-3.5 w-3.5" />, to: (s) => (s >= 2 ? s - 2 : null) },
+  { dir: "down", icon: <ArrowDown className="h-3.5 w-3.5" />, to: (s) => (s < 2 ? s + 2 : null) },
+];
 
 function Signal({ label, value, readout, detail, peak }: { label: string; value: number | null; readout: string; detail: string; peak?: boolean }) {
   return (

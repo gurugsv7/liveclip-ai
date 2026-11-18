@@ -1,5 +1,5 @@
 import {
-  Check, Download, ExternalLink, FolderOpen, Loader2, RefreshCcw, ScanFace, Sparkles, Trash2, Upload, Wand2, X,
+  Check, Copy, Download, ExternalLink, FolderOpen, Loader2, RefreshCcw, ScanFace, Sparkles, Trash2, Upload, Wand2, X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, media } from "@/lib/api";
@@ -260,6 +260,7 @@ export function ClipEditor({ clip }: { clip: Clip }) {
             {clip.publish_status && <div className="text-[11px] text-ink-300">Publish: {clip.publish_status}</div>}
           </div>
         )}
+        {clip.files.export_path && (clip.files.cover_path || clip.post_caption) && <PostKit clip={clip} />}
 
         <div className="space-y-1 text-[11px] text-ink-400">
           <Row k="Captured" v={new Date(clip.created_at * 1000).toLocaleString()} />
@@ -312,5 +313,46 @@ function FacecamOverlay({ rect, drawing, onDone }: { rect: Rect | null; drawing:
         </div>
       )}
     </div>
+  );
+}
+
+/** Cover image + ready-to-paste caption, made with every export. */
+function PostKit({ clip }: { clip: Clip }) {
+  const toast = useStore((s) => s.toast);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(clip.post_caption ?? "");
+      toast("ok", "Caption copied");
+    } catch {
+      toast("err", "Couldn't copy: select the text and press Ctrl+C");
+    }
+  };
+  return (
+    <section className="panel space-y-3 p-3 text-xs" aria-label="Post kit">
+      <h3 className="font-display text-lg font-black leading-none">Post kit</h3>
+      {clip.files.cover_path && (
+        <div className="flex items-start gap-3">
+          <img src={media.clip(clip.id, "cover", clip.updated_at)} alt="Reel cover: best frame with the hook line"
+            className="aspect-[9/16] w-24 shrink-0 border border-ink-600 object-cover" />
+          <div className="space-y-1.5">
+            <div className="font-semibold">Cover</div>
+            <p className="text-[11px] text-ink-400">Best frame of the reel with the hook line. Upload it as the Reel/Short cover.</p>
+            <a className="inline-flex h-6 items-center gap-1 rounded-md border border-ink-600 px-2 text-[11px] hover:bg-ink-700"
+              href={media.clip(clip.id, "cover", clip.updated_at)} download><Download className="h-3 w-3" />Cover JPG</a>
+          </div>
+        </div>
+      )}
+      {clip.post_caption && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold">Caption</span>
+            <Button size="xs" onClick={copy}><Copy className="h-3 w-3" />Copy</Button>
+          </div>
+          <textarea readOnly value={clip.post_caption} rows={Math.min(10, clip.post_caption.split("\n").length + 1)}
+            className={cn(inputCls, "w-full resize-y font-sans text-[12px] leading-snug")} aria-label="Post caption"
+            onFocus={(e) => e.currentTarget.select()} />
+        </div>
+      )}
+    </section>
   );
 }

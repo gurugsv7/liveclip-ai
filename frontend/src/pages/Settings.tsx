@@ -113,7 +113,7 @@ export function SettingsPage() {
               {num("clips.max_clip_s", "Max clip length", { unit: "s" })}
               {num("clips.max_reaction_wait_s", "Max reaction wait", { unit: "s" })}
               <div className="col-span-3">{sw("clips.keep_discarded_auto_clips", "Keep discarded AI clips", "Off: low-scoring auto candidates are deleted after scoring")}</div>
-              <div className="col-span-3">{sw("audio_monitor.allow_multi", "Allow multiple audible streams", "Default is single-stream monitoring: selecting a speaker mutes the others")}</div>
+              <div className="col-span-3">{sw("audio_monitor.allow_multi", "Allow multiple audible streams", "On: hear several streams at once, each with its own volume bar. Off: unmuting one stream mutes the others")}</div>
             </div>
           )}
           {sec === "Storage" && <StorageSettings draft={draft} setDraft={setDraft} num={num} save={save} dirty={dirty} busy={busy === "save"} />}

@@ -8,6 +8,7 @@ footage from different streamers or different sessions can never be merged.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import re
@@ -81,7 +82,8 @@ class ClipService:
         if tr:
             tr["words"] = json.loads(tr["words"])
         c["transcript"] = tr
-        c["files"] = {k: bool(c.get(k) and Path(c[k]).exists()) for k in ("file_path", "thumb_path", "preview_path", "export_path")}
+        c["files"] = {k: bool(c.get(k) and Path(c[k]).exists())
+                      for k in ("file_path", "thumb_path", "preview_path", "export_path", "cover_path")}
         return c
 
     def update(self, clip_id: str, **fields) -> None:
@@ -281,6 +283,14 @@ class ClipService:
             ev_chat = ev_chat if ev_chat is not None else st_chat
         signals = json.loads(ev["signals"] or "{}") if ev else {}
         ev_speech = (signals.get("speech") or {}).get("score")
+        chat_info = signals.get("chat") if isinstance(signals.get("chat"), dict) else None
+        if ev and chat_available and clip["detection_method"] == "auto":
+            # chat reacts a few seconds late: use its peak over the whole clip, not just the trigger instant
+            _, st_chat = await asyncio.to_thread(self._stored_signals, clip)
+            if st_chat is not None and st_chat > (ev_chat or 0.0):
+                ev_chat = st_chat
+                if st_chat >= 0.3:
+                    chat_info = None      # chat really reacted; the trigger-time "quiet chat" no longer applies
         snd = await asyncio.to_thread(self._clip_sound_events, clip)
         if snd:
             from ..detection.sound_events import reaction_score
@@ -294,7 +304,7 @@ class ClipService:
             "laughter": laughter,
             "novelty": nov,
         }
-        scoring.drop_quiet_partner(scores)
+        scoring.drop_quiet_partner(scores, chat_info=chat_info)
         sem = None
         if self.cfg.ai.ollama_enabled:
             sem = await self.semantic.score(streamer=streamer["name"], duration=dur, peak=peak or dur / 2, words=words,
@@ -532,12 +542,76 @@ class ClipService:
             self.update(clip["id"], preview_path=res["path"])
         else:
             if clip.get("export_path") and clip["export_path"] != res["path"]:
-                Path(clip["export_path"]).unlink(missing_ok=True)
-            self.update(clip["id"], export_path=res["path"], export_status="done", status="exported", error=None)
+                old = Path(clip["export_path"])
+                for p in (old, old.with_suffix(".srt"), old.with_suffix(".transcript.json"),
+                          old.with_suffix(".cover.jpg"), old.with_suffix(".caption.txt")):
+                    p.unlink(missing_ok=True)
+            cover, caption = await self._post_kit(clip, spec, res)
+            self.update(clip["id"], export_path=res["path"], export_status="done", status="exported", error=None,
+                        cover_path=cover, post_caption=caption)
             self.db.insert("export_jobs", {"id": new_id("exp_"), "clip_id": clip["id"], "target": "local", "state": "done",
                                            "output_path": res["path"], "created_at": time.time(), "finished_at": time.time()})
         self.hub.publish("render_done", {"clip_id": clip["id"], "preview": preview, "path": res["path"],
                                          "width": summ.get("width"), "height": summ.get("height"), "fps": summ.get("fps")})
+
+    async def _post_kit(self, clip: dict, spec: RenderSpec, res: dict) -> tuple[str | None, str | None]:
+        """Cover image + post caption next to the exported reel. Never fails the export."""
+        from ..editing.cover import make_cover, pick_cover_time, pick_face_time, post_caption
+
+        out = Path(res["path"])
+        words = res.get("words") or []
+        streamer = self.db.one("SELECT name, platform, url FROM streamers WHERE id=?", (clip["streamer_id"],)) or {}
+        caption = None
+        try:
+            caption = post_caption(streamer=streamer.get("name") or clip.get("streamer_name") or "streamer",
+                                   platform=streamer.get("platform") or clip.get("platform") or "",
+                                   url=streamer.get("url"), hook=clip.get("title"), words=words)
+            out.with_suffix(".caption.txt").write_text(caption, encoding="utf-8")
+        except Exception:
+            log.exception("post caption failed for %s", clip["id"])
+        cover = None
+        work = self.ctx.paths.temp / f"cover_{clip['id']}"
+        ff = self.ctx.tools.ffmpeg
+        style = dict(style=spec.caption_style, font=spec.font, fonts_dir=spec.fonts_dir, uppercase=spec.caption_uppercase)
+        hook = spec.title if spec.hook else None
+        try:
+            pieces = res.get("pieces") or []
+            t_face = None
+            if spec.facecam:
+                # the streamer's own reaction face (inside their facecam), near the peak
+                t_face = await asyncio.to_thread(pick_face_time, ff, spec.src, pieces, spec.facecam,
+                                                 spec.src_w, spec.src_h, spec.peak)
+            if t_face is not None:
+                # cover in the facecam layout: face on top, content below, hook on the seam
+                one = dataclasses.replace(spec, layout="facecam", segments=[(max(0.0, t_face - 0.05), t_face + 0.55)],
+                                          words=[], captions=False, hook=False, punch_zoom=False, cold_open=False,
+                                          preview=False, out=str(work / "cover_src.mp4"))
+                work.mkdir(parents=True, exist_ok=True)
+                async with self._render_lock:
+                    r1 = await asyncio.to_thread(render, one, ff, self.ctx.paths.temp)
+                p = await asyncio.to_thread(make_cover, ff, r1["path"], out.with_suffix(".cover.jpg"), 0.1, hook=hook,
+                                            work=work / "c", hook_y=int(1920 * 0.40) // 2 * 2, **style)
+                log.info("cover for %s: streamer face at %.1fs of the source", clip["id"], t_face)
+            else:
+                cuts, off, peak = [], 0.0, None
+                for a, b in pieces:                   # map the source-time peak onto the reel timeline
+                    if spec.peak is not None and a <= spec.peak <= b:
+                        peak = off + spec.peak - a
+                    off += b - a
+                    cuts.append(off)
+                hook_until = spec.hook_seconds if hook else 0.0
+                # no known facecam: faces in frame may be content (thumbnails, a watched video) -> low weight
+                at = await asyncio.to_thread(pick_cover_time, ff, str(out), res["duration"], peak=peak, words=words,
+                                             cuts=cuts[:-1], hook_until=hook_until, face_weight=0.1)
+                p = await asyncio.to_thread(make_cover, ff, str(out), out.with_suffix(".cover.jpg"), at, hook=hook,
+                                            work=work, **style)
+                log.info("cover for %s at %.1fs of the reel", clip["id"], at)
+            cover = str(p)
+        except Exception:
+            log.exception("cover failed for %s", clip["id"])
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        return cover, caption
 
     async def on_render_failed(self, job: dict) -> None:
         if job["kind"] == "render_export":
@@ -550,13 +624,13 @@ class ClipService:
         if not clip:
             return
         self.ctx.retention.release_ref("clip", clip_id)
-        for k in ("file_path", "thumb_path", "preview_path", "export_path"):
+        for k in ("file_path", "thumb_path", "preview_path", "export_path", "cover_path"):
             if clip.get(k):
                 p = Path(clip[k])
                 p.unlink(missing_ok=True)
                 if k == "export_path":
-                    p.with_suffix(".srt").unlink(missing_ok=True)
-                    p.with_suffix(".transcript.json").unlink(missing_ok=True)
+                    for ext in (".srt", ".transcript.json", ".cover.jpg", ".caption.txt"):
+                        p.with_suffix(ext).unlink(missing_ok=True)
         self.db.execute("DELETE FROM clips WHERE id=?", (clip_id,))
         self.hub.publish("clip_deleted", {"id": clip_id}, notable=True)
 

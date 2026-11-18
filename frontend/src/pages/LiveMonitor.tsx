@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { useStore } from "@/lib/store";
 import type { Streamer } from "@/lib/types";
-import { EmptySlot, StreamDialog, StreamPanel } from "@/components/StreamPanel";
+import { DRAG_TYPE, EmptySlot, StreamDialog, StreamPanel } from "@/components/StreamPanel";
 import { Tip } from "@/components/ui";
 
 const COMPACT_MONITOR_QUERY = "(min-width: 1024px) and (max-height: 820px)";
@@ -19,6 +19,20 @@ export function LiveMonitor() {
   const bySlot: (Streamer | undefined)[] = [0, 1, 2, 3].map((i) => streams.find((s) => s.slot === i));
   const exp = expanded ? streams.find((s) => s.id === expanded) : null;
   const others = bySlot.flatMap((s, i) => (s && s.id !== exp?.id ? [{ s, i }] : []));
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropSlot, setDropSlot] = useState<number | null>(null);
+  const move = async (id: string, slot: number) => {
+    const me = streams.find((s) => s.id === id);
+    if (!me || me.slot === slot) return;
+    // swap on screen at once; the server confirms (or we reload on error)
+    setS({ streams: streams.map((s) => (s.id === id ? { ...s, slot } : s.slot === slot ? { ...s, slot: me.slot } : s)), selected: slot });
+    try {
+      useStore.getState().setStreams(await api.moveStream(id, slot));
+    } catch (e) {
+      useStore.getState().toast("err", (e as Error).message);
+      useStore.getState().setStreams(await api.streams());
+    }
+  };
   const liveCount = bySlot.filter((s) => s && live[s.id]?.state === "live").length;
 
   return (
@@ -46,10 +60,16 @@ export function LiveMonitor() {
           </>
         ) : (
           bySlot.map((s, i) => (
-            <div key={s?.id ?? `empty-${i}`} className="flex min-h-0 min-w-0 [&>*]:flex-1">
+            <div key={s?.id ?? `empty-${i}`}
+              className={cn("flex min-h-0 min-w-0 [&>*]:flex-1", dragId && dropSlot === i && s?.id !== dragId && "outline outline-2 outline-offset-2 outline-violet-500")}
+              onDragOver={(e) => { if (e.dataTransfer.types.includes(DRAG_TYPE)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDropSlot(i); } }}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropSlot((d) => (d === i ? null : d)); }}
+              onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData(DRAG_TYPE); setDropSlot(null); setDragId(null); if (id) move(id, i); }}>
               {s ? (
                 <StreamPanel streamer={s} fitGrid selected={selected === i} onSelect={() => setS({ selected: i })}
-                  onReplace={(x) => setDialog({ slot: x.slot, replacing: x })} />
+                  onReplace={(x) => setDialog({ slot: x.slot, replacing: x })}
+                  onMove={(slot) => move(s.id, slot)} dragging={dragId === s.id}
+                  onDragStart={() => setDragId(s.id)} onDragEnd={() => { setDragId(null); setDropSlot(null); }} />
               ) : (
                 <EmptySlot slot={i} onAdd={(slot) => setDialog({ slot, replacing: null })} />
               )}

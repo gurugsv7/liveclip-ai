@@ -28,6 +28,7 @@ TEST_CONFIG = {
     "detection": {"min_baseline_s": 8, "trigger_threshold": 0.55, "cooldown_s": 10, "merge_window_s": 10},
     "clips": {"pre_context_s": 6, "post_context_s": 4, "max_reaction_wait_s": 8, "max_clip_s": 30},
     "render": {"fps": 30},
+    "resume_monitoring": False,
 }
 
 
@@ -220,6 +221,14 @@ def test_08_vertical_export_is_valid_1080x1920(app_env):
     assert Path(got["export_path"]).with_suffix(".srt").exists()
     hf = json.loads(Path(got["export_path"]).with_suffix(".transcript.json").read_text())
     assert [w["text"] for w in hf] == ["no", "way"]
+    # post kit: cover = a real 1080x1920 frame of the reel; caption with credit + hashtags
+    assert got["files"]["cover_path"] and got["cover_path"].endswith(".cover.jpg")
+    cs = stream_summary(ffprobe(TOOLS.ffprobe, got["cover_path"]))
+    assert (cs["width"], cs["height"]) == (1080, 1920)
+    assert c.get(f"/media/clips/{clip['id']}/cover").headers["content-type"] == "image/jpeg"
+    cap = got["post_caption"]
+    assert cap.startswith("Alpha test clip") and "#alpha" in cap and "Alpha live on" in cap
+    assert Path(got["export_path"]).with_suffix(".caption.txt").read_text(encoding="utf-8") == cap
     for layout in ("letterbox",):
         c.patch(f"/api/clips/{clip['id']}", json={"layout": layout})
         c.post(f"/api/clips/{clip['id']}/render-preview")
@@ -309,3 +318,56 @@ def test_13_restart_recovers_interrupted_jobs(tmp_path, fixture_media):
         assert Path(got["file_path"]).exists()
         assert ctx2.db.scalar("SELECT COUNT(*) FROM processing_jobs WHERE state='running'") == 0
         assert ctx2.db.scalar("SELECT state FROM stream_sessions") in ("stopped", "ended")
+
+
+def test_move_stream_swaps_slots_without_touching_capture(app_env):
+    c, ctx = app_env["client"], app_env["ctx"]
+    slot = lambda sid: c.get("/api/streams").json() and next(s["slot"] for s in c.get("/api/streams").json() if s["id"] == sid)
+    sa, sb = slot(app_env["a"]), slot(app_env["b"])
+    session_a = ctx.manager.sessions[app_env["a"]].session_id
+    # swap with an occupied slot
+    rows = c.post(f"/api/streams/{app_env['a']}/move", json={"slot": sb}).json()
+    assert {r["id"]: r["slot"] for r in rows} == {app_env["a"]: sb, app_env["b"]: sa}
+    # move into an empty slot
+    c.post(f"/api/streams/{app_env['b']}/move", json={"slot": 3}).raise_for_status()
+    assert slot(app_env["b"]) == 3 and slot(app_env["a"]) == sb
+    assert ctx.manager.sessions[app_env["a"]].session_id == session_a          # capture untouched
+    assert ctx.manager.sessions[app_env["b"]].streamer["slot"] == 3            # cached row updated
+    assert c.post(f"/api/streams/{app_env['a']}/move", json={"slot": 4}).status_code == 422
+    assert c.post("/api/streams/nope/move", json={"slot": 1}).status_code == 400
+
+
+def test_monitored_streams_resume_after_restart_but_user_stopped_ones_dont(tmp_path, fixture_media):
+    from liveclip.app import create_app
+    from liveclip.context import AppContext
+    fixtures_dir = Path(fixture_media["fixture_a"]["media"]).parent
+    cfg = {**TEST_CONFIG, "resume_monitoring": True}
+    ctx = AppContext(data_dir=tmp_path, fixtures_dir=fixtures_dir, config_overrides=cfg)
+    with TestClient(create_app(ctx, serve_frontend=False)) as c:
+        keep = c.post("/api/streams", json={"name": "Keep", "url": "local:fixture_a", "start": True}).json()["id"]
+        off = c.post("/api/streams", json={"name": "Off", "url": "local:fixture_b", "start": True}).json()["id"]
+        idle = c.post("/api/streams", json={"name": "Idle", "url": "local:fixture_a"}).json()["id"]
+        c.post(f"/api/streams/{off}/stop").raise_for_status()          # the user stopped this one
+        old_session = ctx.manager.sessions[keep].session_id
+    # app closed (restart / reboot): "Keep" was still being monitored
+    ctx2 = AppContext(data_dir=tmp_path, fixtures_dir=fixtures_dir, config_overrides=cfg)
+    with TestClient(create_app(ctx2, serve_frontend=False)) as c2:
+        assert set(ctx2.manager.sessions) == {keep}
+        assert ctx2.manager.sessions[keep].session_id != old_session     # fresh, isolated session
+        live = {s["id"]: s["live"] for s in c2.get("/api/streams").json()}
+        assert live[off] is None and live[idle] is None
+
+
+def test_database_from_before_monitoring_column_is_migrated(tmp_path):
+    import sqlite3
+    from liveclip.db import Database
+    db_path = tmp_path / "old.db"
+    con = sqlite3.connect(db_path)
+    con.execute("CREATE TABLE streamers (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL, platform TEXT NOT NULL,"
+                " url TEXT NOT NULL, slot INTEGER NOT NULL DEFAULT 0, priority INTEGER NOT NULL DEFAULT 2,"
+                " color TEXT NOT NULL DEFAULT '#8b5cf6', ai_enabled INTEGER NOT NULL DEFAULT 1, facecam TEXT,"
+                " default_layout TEXT NOT NULL DEFAULT 'smart_crop', usage_notes TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL)")
+    con.commit(); con.close()
+    db = Database(db_path)
+    assert "monitoring" in {r[1] for r in db._conn.execute("PRAGMA table_info(streamers)")}
+    db.close()

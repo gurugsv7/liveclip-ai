@@ -62,7 +62,7 @@ def novelty(text: str, recent_texts: list[str], seconds_since_last: float | None
     return round(max(0.0, min(1.0, score)), 3)
 
 
-def drop_quiet_partner(scores: dict, strong: float = 0.6, weak: float = 0.3) -> None:
+def drop_quiet_partner(scores: dict, strong: float = 0.6, weak: float = 0.3, chat_info: dict | None = None) -> None:
     """Chat and audio are two views of the same reaction. When one is strong and
     the other is near zero (calm-voiced streamer + exploding chat, or a scream
     over a slow chat), the quiet one is absence of evidence, not evidence
@@ -72,7 +72,13 @@ def drop_quiet_partner(scores: dict, strong: float = 0.6, weak: float = 0.3) -> 
     # make the quiet views "no evidence"; excited words alone are weaker (ASR can hallucinate)
     if not any(scores.get(k) is not None and scores[k] >= strong for k in ("chat", "audio")):
         return
+    # An active chat (>= 1 msg/s normally) that stayed at or below its normal pace IS evidence:
+    # a real moment makes a busy chat react. Real case: xqc watching a bodycam video, one loud
+    # bang, chat at 3.2/s vs a 6/s normal -> it was clipped as "audio excitement".
+    chat_quiet_but_active = bool(chat_info) and (chat_info.get("baseline") or 0) >= 1.0         and (chat_info.get("z") if chat_info.get("z") is not None else 99) <= 0.5
     for k in views:
+        if k == "chat" and chat_quiet_but_active:
+            continue
         if scores[k] < weak:
             scores[k] = None
 

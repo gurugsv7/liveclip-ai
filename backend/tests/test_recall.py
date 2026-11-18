@@ -313,3 +313,100 @@ def test_hook_never_ends_mid_sentence():
              enumerate("For a game as important as GTA, they will need a huge list.".split())]
     t = title_suggestions("x", words, "", None)
     assert not t or not t[0].endswith(",")
+
+
+# ---------------------------------------------------------------- xqc reaction-content false clip (2026-11-18)
+def test_single_bang_is_not_audio_excitement_but_a_sustained_yell_is():
+    """Real xqc clip 'The suspects are now transported to the jail': steady talking with
+    peaks around -20 dB, then ONE 0.5 s hit at -11 dB (a thud in the bodycam video he was
+    watching) scored audio 0.90 and produced a clip with nothing in it."""
+    from liveclip.detection.audio import AudioAnalyzer
+
+    def talk(a, seconds, rng):
+        for _ in range(seconds):
+            for k in range(5):                           # syllables: 0.2 s loud, 0.2 s quiet
+                amp = 0.1 * (1.0 + 0.2 * rng.standard_normal()) if k % 2 == 0 else 0.015
+                t = np.arange(int(0.2 * SR)) / SR
+                a.feed((np.sin(2 * np.pi * 220 * t) * amp * 32767).astype(np.int16).tobytes())
+
+    def burst(a, seconds, amp=0.45):
+        t = np.arange(int(seconds * SR)) / SR
+        a.feed((np.sin(2 * np.pi * 300 * t) * amp * 32767).astype(np.int16).tobytes())
+
+    rng = np.random.default_rng(1)
+    bang = AudioAnalyzer(); bang.start_run(0)
+    talk(bang, 90, rng); burst(bang, 0.5); talk(bang, 1, rng)
+    e_bang = bang.excitement(window=5)[0]
+    yell = AudioAnalyzer(); yell.start_run(0)
+    talk(yell, 90, rng); burst(yell, 2.5)
+    e_yell = yell.excitement(window=5)[0]
+    assert e_bang < 0.6, f"a lone bang scored {e_bang:.2f}"
+    assert 0.85 * e_bang < AppConfig().detection.trigger_threshold    # can't trigger on its own
+    assert e_yell > 0.7, f"a real 2.5 s yell scored only {e_yell:.2f}"
+
+
+def test_audio_only_moment_with_busy_but_quiet_chat_is_not_saved_like_real_xqc_clip():
+    """Real numbers from that clip: audio 0.90 but chat 3.2 msg/s vs xqc's normal 6/s
+    (z -1.06). The quiet chat was thrown away as 'no evidence' and the clip scored 0.60."""
+    from liveclip.ai import scoring
+    w = AppConfig().detection.weights.model_dump()
+    s = {"chat": 0.091, "audio": 0.899, "speech": None, "transcript": 0.273, "laughter": 0.136, "novelty": 0.811}
+    scoring.drop_quiet_partner(s, chat_info={"baseline": 6.0, "z": -1.06, "rate": 3.17})
+    final = scoring.weighted(s, w)
+    assert s["chat"] == 0.091
+    assert AppConfig().clips.maybe_threshold <= final < AppConfig().detection.save_threshold   # Maybe pool, not review
+
+
+def test_real_chat_spike_during_reaction_content_is_still_kept():
+    """Same stream, real moment: chat spammed 'Stare' + LOL (13/s vs 3.6/s normal, z 4.5)."""
+    from liveclip.ai import scoring
+    w = AppConfig().detection.weights.model_dump()
+    s = {"chat": 0.72, "audio": 0.878, "speech": None, "transcript": 0.641, "laughter": 0.097, "novelty": 1.0}
+    scoring.drop_quiet_partner(s, chat_info={"baseline": 3.6, "z": 4.53, "rate": 13.0})
+    assert scoring.weighted(s, w) >= AppConfig().detection.save_threshold
+
+
+def test_slow_chat_channel_stays_no_evidence_for_a_loud_reaction():
+    """Small channels (chat well under 1 msg/s) can't be expected to react: keep the old rule."""
+    from liveclip.ai import scoring
+    s = {"chat": 0.05, "audio": 0.9, "transcript": 0.4, "laughter": 0.3, "novelty": 0.8}
+    scoring.drop_quiet_partner(s, chat_info={"baseline": 0.3, "z": -0.2})
+    assert s["chat"] is None
+
+
+# real xqc session 2026-11-18, 8:26-8:56: (media_t, audio excitement 5 s window, chat score, chat z)
+XQC_BUILD = [(826, 0.0, 0.07, 1.1), (827, 0.0, 0.1, 1.4), (828, 0.0, 0.05, 1.0), (829, 0.0, 0.08, 1.2), (830, 0.0, 0.08, 1.1),
+             (831, 0.0, 0.17, 1.8), (832, 0.0, 0.1, 1.3), (833, 0.0, 0.14, 1.5), (834, 0.02, 0.23, 2.2), (835, 0.02, 0.11, 1.1),
+             (836, 0.27, 0.15, 1.4), (837, 0.37, 0.19, 1.7), (838, 0.37, 0.18, 1.6), (839, 0.37, 0.2, 1.8), (840, 0.47, 0.26, 2.3),
+             (841, 0.47, 0.25, 2.2), (842, 0.47, 0.16, 1.6), (843, 0.47, 0.1, 1.2), (844, 0.47, 0.12, 1.3), (845, 0.47, 0.08, 0.2),
+             (846, 0.38, 0.07, -0.6), (847, 0.38, 0.06, 0.1), (848, 0.39, 0.05, 0.0), (849, 0.45, 0.06, 0.1), (850, 0.45, 0.05, 0.1),
+             (851, 0.45, 0.05, 0.3), (852, 0.45, 0.04, 0.9), (853, 0.45, 0.04, 0.5), (854, 0.45, 0.04, 0.5), (855, 0.31, 0.05, 1.1)]
+
+
+def _run_detector(rows):
+    from liveclip.detection.hype import HypeDetector, HypeParams
+    fired = []
+    d = AppConfig().detection
+    det = HypeDetector(HypeParams(trigger=d.trigger_threshold, release=d.release_threshold,
+                                  single_signal_factor=d.single_signal_factor), lambda: "h",
+                       lambda c, a, b: fired.append(c), lambda *a: None, lambda *a: None)
+    for t, a, cs, z in rows:
+        for half in (0.0, 0.5):                       # the live loop ticks every 0.5 s
+            det.tick(t + half, a, t + half, cs, 600, extra={"chat": {"z": z}})
+    return fired
+
+
+def test_sustained_loud_stretch_with_engaged_chat_triggers_like_real_xqc_miss():
+    """15 s of loud audio (+9 dB) while chat ran 15 msg/s (z 2.3) never crossed the instant
+    trigger (combined ~0.40 < 0.62) and was missed."""
+    fired = _run_detector(XQC_BUILD)
+    assert len(fired) == 1 and "sustained" in fired[0].signals
+    assert 836 <= fired[0].t_event <= 852
+
+
+def test_sustained_rule_needs_chat_not_just_a_long_loud_video():
+    """Same loudness with chat at its normal pace (a loud stretch of the watched video) must not trigger."""
+    flat = [(t, a, cs, 0.3) for t, a, cs, _ in XQC_BUILD]
+    assert _run_detector(flat) == []
+    no_chat = _run_detector([(t, a, None, None) for t, a, _, _ in XQC_BUILD])
+    assert no_chat == []

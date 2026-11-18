@@ -112,12 +112,14 @@ export interface Clip {
   trim_end: number | null;
   preview_path: string | null;
   export_path: string | null;
+  cover_path: string | null;
+  post_caption: string | null;
   publish_status: string | null;
   error: string | null;
   created_at: number;
   updated_at: number;
   transcript: { text: string; words: Word[]; model: string; language: string } | null;
-  files: { file_path: boolean; thumb_path: boolean; preview_path: boolean; export_path: boolean };
+  files: { file_path: boolean; thumb_path: boolean; preview_path: boolean; export_path: boolean; cover_path?: boolean };
 }
 
 export interface HypeEvent {

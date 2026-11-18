@@ -7,8 +7,8 @@ import { useEffect, useRef, useState } from "react";
  * `muted` is the only thing that controls what you hear; recording audio is
  * untouched by anything in the UI.
  */
-export function HlsPlayer({ src, muted, paused, onLatency, className }: {
-  src: string | null; muted: boolean; paused?: boolean; onLatency?: (s: number) => void; className?: string;
+export function HlsPlayer({ src, muted, volume = 1, paused, onLatency, className }: {
+  src: string | null; muted: boolean; volume?: number; paused?: boolean; onLatency?: (s: number) => void; className?: string;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -74,6 +74,10 @@ export function HlsPlayer({ src, muted, paused, onLatency, className }: {
   useEffect(() => {
     if (ref.current) ref.current.muted = muted;
   }, [muted]);
+
+  useEffect(() => {
+    if (ref.current) ref.current.volume = Math.max(0, Math.min(1, volume));
+  }, [volume]);
 
   useEffect(() => {
     const v = ref.current;

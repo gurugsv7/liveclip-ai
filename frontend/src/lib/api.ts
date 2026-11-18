@@ -36,6 +36,7 @@ export const api = {
   addStream: (b: { name: string; url: string; slot?: number; priority?: number; start?: boolean }) =>
     req<Streamer>("POST", "/api/streams", b),
   patchStream: (id: string, b: Partial<Streamer> & { clear_facecam?: boolean }) => req<Streamer>("PATCH", `/api/streams/${id}`, b),
+  moveStream: (id: string, slot: number) => req<Streamer[]>("POST", `/api/streams/${id}/move`, { slot }),
   removeStream: (id: string) => req<{ ok: boolean }>("DELETE", `/api/streams/${id}`),
   start: (id: string) => req<any>("POST", `/api/streams/${id}/start`),
   stop: (id: string) => req<any>("POST", `/api/streams/${id}/stop`),
@@ -77,6 +78,6 @@ export const api = {
 
 export const media = {
   live: (sessionId: string) => `/media/live/${sessionId}/index.m3u8`,
-  clip: (id: string, kind: "source" | "preview" | "export" | "thumb" | "srt", bust?: number) =>
+  clip: (id: string, kind: "source" | "preview" | "export" | "thumb" | "srt" | "cover", bust?: number) =>
     `/media/clips/${id}/${kind}${bust ? `?v=${bust}` : ""}`,
 };

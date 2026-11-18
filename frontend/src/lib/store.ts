@@ -20,6 +20,7 @@ interface State {
   wsConnected: boolean;
   selected: number;              // slot 0..3
   audible: string[];             // streamer ids audible in the dashboard
+  volumes: Record<string, number>; // per-stream dashboard volume 0..1 (this browser only)
   expanded: string | null;
   sidebarCollapsed: boolean;
   timelineOpen: boolean | null;
@@ -45,11 +46,22 @@ interface State {
   clearWarning: (k: string) => void;
   set: (p: Partial<State>) => void;
   toggleAudio: (id: string, allowMulti: boolean) => void;
+  setVolume: (id: string, v: number, allowMulti: boolean) => void;
   toast: (kind: Toast["kind"], text: string) => void;
   dismissToast: (id: number) => void;
 }
 
 let toastId = 1;
+const VOL_KEY = "liveclip.volumes";
+
+function loadVolumes(): Record<string, number> {
+  try {
+    const v = JSON.parse(localStorage.getItem(VOL_KEY) || "{}");
+    return v && typeof v === "object" ? v : {};
+  } catch {
+    return {};
+  }
+}
 
 export const useStore = create<State>((set, get) => ({
   page: "live",
@@ -66,6 +78,7 @@ export const useStore = create<State>((set, get) => ({
   wsConnected: false,
   selected: 0,
   audible: [],
+  volumes: loadVolumes(),
   expanded: null,
   sidebarCollapsed: false,
   timelineOpen: null,
@@ -126,6 +139,18 @@ export const useStore = create<State>((set, get) => ({
       // single-stream monitoring: clicking the active speaker mutes all
       set({ audible: cur.length === 1 && cur[0] === id ? [] : [id] });
     }
+  },
+  setVolume: (id, v, allowMulti) => {
+    const volumes = { ...get().volumes, [id]: Math.max(0, Math.min(1, v)) };
+    try {
+      localStorage.setItem(VOL_KEY, JSON.stringify(volumes));
+    } catch {
+      /* private window: keep it for this session only */
+    }
+    const cur = get().audible;
+    // turning a muted stream's volume up means "I want to hear it"
+    const audible = v > 0 && !cur.includes(id) ? (allowMulti ? [...cur, id] : [id]) : cur;
+    set({ volumes, audible });
   },
   toast: (kind, text) => {
     const id = toastId++;
