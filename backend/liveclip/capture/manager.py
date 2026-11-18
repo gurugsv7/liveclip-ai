@@ -488,8 +488,14 @@ class StreamManager:
         cfg = self.ctx.config
         src = resolve_source(url, allow_local=cfg.allow_local_sources, fixtures_dir=self.ctx.fixtures_dir)
         was_running = streamer_id in self.sessions
+        old = self.get_streamer(streamer_id) or {}
         await self.stop(streamer_id)
         fields = {"url": src.url, "platform": src.platform}
+        if old.get("url") != src.url:
+            # a different channel is a different streamer: don't inherit the old one's speech language
+            # (real case: Kai Cenat put in a Tamil streamer's slot was transcribed as Tamil)
+            fields["language"] = cfg.ai.language or "en"
+            fields["caption_mode"] = "tanglish"
         if name:
             fields["name"] = name
         self.ctx.db.update("streamers", "id", streamer_id, fields)

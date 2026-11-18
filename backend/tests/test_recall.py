@@ -410,3 +410,43 @@ def test_sustained_rule_needs_chat_not_just_a_long_loud_video():
     assert _run_detector(flat) == []
     no_chat = _run_detector([(t, a, None, None) for t, a, _, _ in XQC_BUILD])
     assert no_chat == []
+
+
+def test_compressed_loud_streamer_yell_still_counts_like_real_kai_cenat():
+    """Real Kai Cenat session: sample peaks at 0 dBFS most of the time (limited audio), loudness
+    range ~7 dB (rms p50 -19, p99 -12). Audio excitement never passed 0.28 in 11 minutes, so his
+    yelling could never trigger. Loud streams are now scored against their own range."""
+    from liveclip.detection.audio import AudioAnalyzer
+
+    def voice(seconds, amp, f=220):
+        # speech-level tone with brief full-scale transients: sample peaks hit 0 dBFS like a limited mic
+        t = np.arange(int(seconds * SR)) / SR
+        x = np.sin(2 * np.pi * f * t) * amp
+        x[:: SR // 20] = 1.0
+        return (np.clip(x, -1, 1) * 32767).astype(np.int16).tobytes()
+
+    def talk(a, seconds, rng):
+        for _ in range(seconds):
+            for k in range(5):            # syllables ~-19 dB rms, softer gaps; peaks always at the ceiling
+                a.feed(voice(0.2, 0.15 * (1 + 0.15 * rng.standard_normal())) if k % 2 == 0 else voice(0.2, 0.05))
+
+    rng = np.random.default_rng(7)
+    a = AudioAnalyzer(); a.start_run(0)
+    talk(a, 120, rng)
+    assert a.compressed()
+    assert a.excitement(window=2)[0] < 0.3, "normal (limited) talking must stay calm"
+    a.feed(voice(2.5, 0.35))              # sustained yell, ~+7 dB (Kai's p50 -> p99 range)
+    e = a.excitement(window=3)[0]
+    assert e >= 0.75, f"a sustained yell on a limited mic scored only {e:.2f}"
+    b = AudioAnalyzer(); b.start_run(0)
+    talk(b, 120, rng); b.feed(voice(0.4, 0.35)); talk(b, 1, rng)
+    assert 0.85 * b.excitement(window=5)[0] < AppConfig().detection.trigger_threshold   # a short burst alone can't trigger
+
+
+def test_normal_dynamic_streamer_is_not_treated_as_compressed():
+    from liveclip.detection.audio import AudioAnalyzer
+    a = AudioAnalyzer(); a.start_run(0)
+    t = np.arange(SR) / SR
+    for _ in range(60):
+        a.feed((np.sin(2 * np.pi * 220 * t) * 0.1 * 32767).astype(np.int16).tobytes())
+    assert not a.compressed()

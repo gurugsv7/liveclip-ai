@@ -31,6 +31,38 @@ log = logging.getLogger("liveclip.capture")
 
 PCM_CHUNK = 3200  # 100 ms of 16 kHz s16 mono
 
+_YT_INFO_RE = re.compile(r"could not get video info - ([A-Z_]+): (.*)", re.IGNORECASE)
+
+
+def classify_failure(lines) -> tuple[str, str]:
+    """Turn streamlink's stderr into (outcome, user-facing detail).
+
+    Streamlink prints "No playable streams found" for *every* failure, so on
+    its own that line can't tell "not live" apart from "YouTube refused this
+    machine" (bot check, region lock, members-only, outdated plugin). Those
+    still retry like offline, but the detail says what actually happened.
+    """
+    text = "\n".join(lines)
+    low = text.lower()
+    m = _YT_INFO_RE.search(text)
+    if m:
+        status, reason = m.group(1).upper(), m.group(2).strip()[:160]
+        if status == "LIVE_STREAM_OFFLINE":
+            return "offline", f"Stream not started yet ({reason})" if reason else "Stream not started yet"
+        hint = ""
+        if status == "LOGIN_REQUIRED" and "bot" in reason.lower():
+            hint = " — YouTube bot check on this network: update streamlink, turn off VPN, or try another network"
+        elif status == "UNPLAYABLE":
+            hint = " — blocked for this region/account"
+        return "offline", f"YouTube refused: {status}: {reason}{hint}"
+    if "does not support protected videos" in low:
+        return "offline", "YouTube served a protected stream that streamlink can't play — update streamlink"
+    if "could not find videoid on channel page" in low:
+        return "offline", "No live video found on the channel page — paste the watch?v= link instead"
+    if "no playable streams found" in low or "is offline" in low or "this channel does not exist" in low:
+        return "offline", "Channel is offline"
+    return "error", ""
+
 
 @dataclass
 class SegmentInfo:
@@ -80,6 +112,7 @@ class CaptureWorker(threading.Thread):
         self.last_segment_wall = 0.0
         self.selected_quality: str | None = None
         self.stderr_tail: deque[str] = deque(maxlen=40)
+        self.offline_detail = ""
         self.state = "starting"
         self.pids: dict[str, int] = {}
 
@@ -149,7 +182,7 @@ class CaptureWorker(threading.Thread):
             if self._halt.is_set():
                 break
             if outcome == "offline":
-                self._set_state("offline", "Channel is offline; checking again in 45s")
+                self._set_state("offline", f"{self.offline_detail or 'Channel is offline'}; checking again in 45s")
                 self.attempts = 0
                 if self._halt.wait(45):
                     break
@@ -238,8 +271,8 @@ class CaptureWorker(threading.Thread):
         t.join(timeout=5)
         if state["rows"] > 0:
             self.attempts = 0  # we were live; reset retry budget
-        text = "\n".join(self.stderr_tail).lower()
-        if "no playable streams found" in text or "is offline" in text or "this channel does not exist" in text:
+        outcome, self.offline_detail = classify_failure(self.stderr_tail)
+        if outcome == "offline":
             return "offline"
         return "ended" if state["rows"] > 0 else "error"
 

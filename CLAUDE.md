@@ -11,7 +11,8 @@ Setup/run/test: `scripts\setup.ps1`, `scripts\start.ps1`, `scripts\stop.ps1`, `s
   short setup line spliced in front ("I already lost… GG" → the comeback), dead air removed
   as jump cuts, and end right after the payoff line — never trail into filler.
   Implemented in `backend/liveclip/editing/highlight.py` (`best_reel_cut`).
-- Hook text on screen from frame 1 (use the streamer's own best line, never invented).
+- **No title/hook header** on reels or covers (user: the box over the first seconds is irritating).
+  `render.hook_text_enabled` defaults to off; the clip title is still used for the post caption and filenames.
 - Word-timed captions from real Whisper timestamps, 1–3 words, one accent colour, inside
   the 9:16 safe area. With the facecam layout, put captions on the seam between face and
   gameplay so they don't cover the action.
@@ -27,8 +28,7 @@ Setup/run/test: `scripts\setup.ps1`, `scripts\start.ps1`, `scripts\stop.ps1`, `s
 - **Every export (and Approve, which exports) ships a post kit** next to the MP4
   (`editing/cover.py`): `.cover.jpg` and `.caption.txt`.
   - Cover = a real frame, never generated. With a facecam: the streamer's own face (inside the
-    facecam rect, sharp, lit, nearest the peak) in the facecam layout, hook on the face/content
-    seam. Faces elsewhere (YouTube thumbnails, people in a watched video) don't count. No facecam:
+    facecam rect, sharp, lit, nearest the peak) in the facecam layout, no text on it. Faces elsewhere (YouTube thumbnails, people in a watched video) don't count. No facecam:
     the sharpest well-lit frame near the peak with no half-shown caption word.
   - Caption = hook line + ≤1 emoji, one more line the streamer really said, a credit line
     (`🎥 <streamer> live on <Platform>: <url>`, it's their footage), 3–5 lowercase hashtags.
@@ -52,6 +52,11 @@ footsteps, R6 breaching) is never "excitement". Applause/cheering are NOT reacti
 **Loudness must be sustained**: full credit needs ≥ 0.8 s of clearly-loud audio within ±2 s of
 the peak (`SUSTAIN_FRAMES`). A lone bang/thud/mic bump is not a reaction (real case: xqc watching
 a bodycam video, one 0.5 s thud scored "audio 0.90" → a clip with nothing in it).
+**Limited/compressed mics** (≥ 30% of voiced seconds peak at ~0 dBFS, e.g. Kai Cenat: whole range
+~7 dB) are scored against the streamer's own range — reaching their loudest ~0.5% = a reaction —
+because they can never get "+5–15 dB over normal". Dynamic streamers keep the normal rule.
+**A replaced stream keeps its old slot's settings** (language, facecam): after Replace, check them
+(real case: Kai Cenat in groot's slot was transcribed as Tamil).
 **A busy chat that stays quiet is evidence against**: if chat normally runs ≥ 1 msg/s and did not
 rise (z ≤ 0.5, also checked over the whole clip since chat lags), it is NOT dropped as
 "no evidence" — the clip goes to Maybe. Slow chats (< 1 msg/s) still count as no evidence.

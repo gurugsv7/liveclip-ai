@@ -22,6 +22,12 @@ MIN_VOICED_BASELINE = 20    # voiced seconds needed before audio excitement is s
 # within +-2 s of the peak. A lone bang/thud/door slam/mic bump (real case: one 0.5 s hit in a
 # bodycam video xqc was watching scored "audio 0.90") gets partial credit only.
 SUSTAIN_FRAMES = 8
+# Heavily compressed/limited streams (real case: Kai Cenat, sample peaks at 0 dBFS most of the time,
+# whole loudness range ~7 dB) can never get "+5..15 dB louder than normal". When at least this share
+# of voiced seconds hits the ceiling, loudness is scored against the streamer's OWN range instead:
+# reaching their loudest ~0.5% counts as a reaction.
+CEILING_DB = -1.0
+CEILING_SHARE = 0.3
 
 
 @dataclass
@@ -59,6 +65,7 @@ class AudioAnalyzer:
         # Excitement compares a window's loudest 0.5 s against THIS (peaks vs peaks) — comparing it
         # with the per-second average made every normal sentence look like shouting.
         self.peak_history: deque[float] = deque(maxlen=int(baseline_seconds))
+        self.ceiling_history: deque[bool] = deque(maxlen=int(baseline_seconds))   # sample peak hit ~0 dBFS
         self._sec_acc: list[float] = []
         self.total_seconds = 0.0
         self.voiced_seconds = 0.0
@@ -123,6 +130,7 @@ class AudioAnalyzer:
             self.sec_history.append(sec_db)
             self.voiced_seconds += 1
             self.peak_history.append(_loudest_half_second(recent))
+            self.ceiling_history.append(peak >= CEILING_DB)
         # adapt noise floor slowly to the quietest seconds
         if len(self.sec_history) >= 10:
             self.noise_floor_db = float(np.percentile(np.array(self.sec_history), 5))
@@ -159,6 +167,13 @@ class AudioAnalyzer:
                 best, best_t = d, chunk[len(chunk) // 2].t
         z = (best - med) / mad
         score = min(1.0, max(0.0, (z - 1.0) / 4.0))
+        loud = med + 1.5 * mad
+        if self.compressed():
+            top = float(np.percentile(np.array(self.peak_history), 99.5))
+            span = max(3.0, top - med)
+            # their loudest 0.5% -> 0.75; beyond it rises to 1.0 within 2 dB
+            score = max(score, min(1.0, max(0.0, (best - med - 0.25 * span) / span + max(0.0, best - top) / 8)))
+            loud = med + 0.6 * span          # "clearly loud" within their own narrow range
         # silence followed by a loud reaction
         # (a brief pause inside normal talking — not coming back from a long silent break)
         before = [f.rms_db for f in self.frames if best_t - 3.0 < f.t <= best_t - 0.6]
@@ -166,10 +181,14 @@ class AudioAnalyzer:
         was_talking = bool(earlier) and sum(d > SILENCE_DB for d in earlier) >= 0.5 * len(earlier)
         if before and was_talking and np.mean(before) < med - 8 and best > med + 6:
             score = min(1.0, score + 0.2)
-        loud = med + 1.5 * mad
         n_loud = sum(1 for f in self.frames if abs(f.t - best_t) <= 2.0 and f.rms_db >= loud)
         score *= min(1.0, max(0.0, (n_loud - 1) / (SUSTAIN_FRAMES - 1)))
         return score, best_t
+
+    def compressed(self) -> bool:
+        """True for streams whose audio is limited at the ceiling most of the time."""
+        h = self.ceiling_history
+        return len(h) >= 30 and sum(h) / len(h) >= CEILING_SHARE
 
     def excitement(self, t_end: float | None = None, window: float = 2.0) -> tuple[float, float]:
         with self._lock:

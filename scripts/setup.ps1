@@ -72,6 +72,8 @@ if (-not $NoCuda) {
   Write-Host "Installing CUDA 12 runtime wheels for faster-whisper (cuBLAS + cuDNN 9)..."
   & $vpy -m pip install "nvidia-cublas-cu12" "nvidia-cudnn-cu12==9.*"
 }
+# YouTube changes break older streamlink plugins; always pull the newest on (re)setup
+& $vpy -m pip install --upgrade streamlink
 & "$venv\Scripts\streamlink.exe" --version
 
 # ---------------------------------------------------------------- frontend

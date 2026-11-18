@@ -398,3 +398,13 @@ def test_user_reel_window_is_exported_exactly_never_auto_cut(app_env):
     got = c.patch(f"/api/clips/{clip['id']}", json={"layout": "letterbox"}).json()
     assert got["layout"] == "letterbox" and got["layout_params"]["layout_locked"] is True
     c.patch(f"/api/clips/{clip['id']}", json={"layout": "smart_crop", "layout_params": {"manual_window": False}})
+
+
+def test_replacing_a_stream_resets_its_speech_language(app_env):
+    c = app_env["client"]
+    sid = app_env["b"]
+    c.patch(f"/api/streams/{sid}", json={"language": "ta"})
+    c.post(f"/api/streams/{sid}/replace", json={"url": "local:fixture_a", "name": "Bravo2"})
+    s = next(x for x in c.get("/api/streams").json() if x["id"] == sid)
+    assert s["language"] == "en" and s["name"] == "Bravo2"
+    c.post(f"/api/streams/{sid}/replace", json={"url": "local:fixture_b", "name": "Bravo"})

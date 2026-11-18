@@ -148,7 +148,7 @@ class RenderConfig(BaseModel):
     caption_size: int = Field(80, ge=40, le=140)
     caption_y: float = Field(0.66, ge=0.2, le=0.82)  # fraction of frame height
     caption_uppercase: bool = True
-    hook_text_enabled: bool = True
+    hook_text_enabled: bool = False   # user: the title header over the first seconds is irritating
     hook_seconds: float = 2.6
     max_concurrent_renders: int = Field(1, ge=1, le=2)
     # House rule: reels are 30 s max — the best moment only (people swipe away from 1-min clips).
