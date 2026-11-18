@@ -1,0 +1,12 @@
+data/
+fixtures/media/
+fixtures/test-cache/
+backend/.venv/
+backend/*.egg-info/
+__pycache__/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+.env
+dist/
+LiveClip-AI-*.zip

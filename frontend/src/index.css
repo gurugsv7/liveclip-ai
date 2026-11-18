@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+html, body, #root { height: 100%; }
+body { font-feature-settings: "cv11", "ss01"; }
+* { scrollbar-width: thin; scrollbar-color: #a79e8e transparent; }
+.tabular { font-variant-numeric: tabular-nums; }
+.panel { @apply border border-ink-750 bg-ink-850/70; }
+.label { @apply font-mono text-[10px] font-semibold uppercase tracking-[0.10em] text-ink-400; }
+.page-title { @apply font-display text-[40px] font-black leading-none tracking-tight xl:text-[56px]; }
+.media-well { color-scheme: dark; background-color: #181b19; color: #eeeae0; }
+.unassigned-well {
+  background-image: repeating-linear-gradient(135deg, #ffffff0b 0 1px, transparent 1px 12px);
+}
+.signal-strip [role="meter"] {
+  background-color: #42463d;
+  mask-image: repeating-linear-gradient(to right, #000 0 5px, transparent 5px 7px);
+}
+.signal-strip [role="meter"] > div { background-color: #a3b569; }
+.signal-strip [role="meter"] > .brightness-125 { background-color: #df6450; }
+.timeline-track {
+  background-image: repeating-linear-gradient(to right, transparent 0 calc(5% - 1px), #20231f24 calc(5% - 1px) 5%);
+}
+.editor-inspector label > .label {
+  @apply font-display text-base font-extrabold normal-case tracking-normal text-ink-100;
+}
+@media (min-width: 1024px) and (max-height: 820px) {
+  .monitor-heading { min-height: 3rem; }
+  .monitor-heading .page-title { font-size: 2rem; }
+  .monitor-grid { gap: 0.5rem; padding-block: 0.5rem; }
+  .monitor-grid [aria-label="Rolling buffer timeline"],
+  .monitor-grid .signal-strip > div:not([role="meter"]) { padding-block: 0.25rem; }
+  .monitor-grid .stream-controls { gap: 0.125rem; padding: 0.25rem; }
+  .monitor-grid .stream-controls > button,
+  .monitor-grid .stream-controls > .relative > button {
+    height: 1.75rem;
+    padding-inline: 0.375rem;
+    font-size: 0.75rem;
+  }
+}
+.focus-ring { @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/70 focus-visible:ring-offset-0; }
+input[type=number]::-webkit-inner-spin-button { opacity: .4; }
+.stripes { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.03) 0 8px, transparent 8px 16px); }
