@@ -19,6 +19,10 @@ CUDA libraries for GPU transcription, the dashboard, and the Whisper + YAMNet mo
 Node.js 18+ is required: https://nodejs.org/
 
 ## 2. Run
+Double-click **`LiveClip.cmd`**. It starts LiveClip and opens the dashboard, or just opens the dashboard if
+LiveClip is already running. Right-click it → *Send to → Desktop (create shortcut)* for a desktop button.
+
+From PowerShell instead:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\start.ps1     # opens http://127.0.0.1:8765
 powershell -ExecutionPolicy Bypass -File scripts\stop.ps1      # graceful stop
