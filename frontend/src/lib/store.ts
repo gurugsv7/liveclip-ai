@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import type { AppConfig, Clip, HypeEvent, Job, LiveStatus, Meters, Resources, Streamer, SystemStatus, Warning } from "./types";
+import type { AppConfig, Clip, HypeEvent, Job, LiveStatus, Meters, Resources, Streamer, SystemStatus, VodJob, Warning } from "./types";
 
-export type Page = "live" | "clips" | "review" | "settings";
+export type Page = "live" | "clips" | "review" | "vods" | "settings";
 
 export interface Toast { id: number; kind: "ok" | "err" | "info"; text: string }
 
@@ -30,6 +30,7 @@ interface State {
   renderProgress: Record<string, number>;
   focusClip: string | null;
   toasts: Toast[];
+  vods: VodJob[];
 
   setPage: (p: Page) => void;
   setStreams: (s: Streamer[]) => void;
@@ -37,6 +38,8 @@ interface State {
   setMeters: (m: Record<string, Meters>) => void;
   upsertClip: (c: Clip) => void;
   removeClip: (id: string) => void;
+  upsertVod: (v: VodJob) => void;
+  removeVod: (id: string) => void;
   setClips: (c: Clip[]) => void;
   addEvent: (e: HypeEvent) => void;
   setEvents: (e: HypeEvent[]) => void;
@@ -88,6 +91,7 @@ export const useStore = create<State>((set, get) => ({
   renderProgress: {},
   focusClip: null,
   toasts: [],
+  vods: [],
 
   setPage: (page) => set({ page }),
   setStreams: (streams) => set({ streams }),
@@ -103,6 +107,15 @@ export const useStore = create<State>((set, get) => ({
       return { clips: next };
     }),
   removeClip: (id) => set((s) => ({ clips: s.clips.filter((c) => c.id !== id) })),
+  upsertVod: (v) =>
+    set((s) => {
+      const i = s.vods.findIndex((x) => x.id === v.id);
+      if (i === -1) return { vods: [v, ...s.vods] };
+      const next = s.vods.slice();
+      next[i] = v;
+      return { vods: next };
+    }),
+  removeVod: (id) => set((s) => ({ vods: s.vods.filter((v) => v.id !== id) })),
   setClips: (clips) => set({ clips }),
   addEvent: (e) =>
     set((s) => {

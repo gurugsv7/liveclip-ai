@@ -68,6 +68,7 @@ export interface Streamer {
   usage_notes: string;
   language?: "en" | "ta" | "auto";
   caption_mode?: "tanglish" | "native";
+  vod_after_stream?: boolean;
   live: LiveStatus | null;
   meters: Meters | null;
 }
@@ -181,3 +182,27 @@ export interface SystemStatus {
 }
 
 export type AppConfig = Record<string, any>;
+
+export type VodState = "queued" | "waiting_vod" | "downloading" | "analyzing" | "cutting" | "done" | "failed" | "cancelled";
+
+export interface VodJob {
+  id: string;
+  streamer_id: string | null;
+  streamer_name?: string | null;
+  streamer_color?: string | null;
+  session_id: string | null;
+  source: "manual" | "after_stream";
+  platform: Platform;
+  url: string | null;
+  path: string | null;
+  title: string | null;
+  duration: number | null;
+  state: VodState;
+  progress: number;
+  detail: string | null;
+  moments: number;
+  clips: number;
+  error: string | null;
+  created_at: number;
+  finished_at: number | null;
+}

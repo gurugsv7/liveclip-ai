@@ -24,6 +24,7 @@ const TABS: { id: Page; label: string }[] = [
   { id: "live", label: "Live Monitor" },
   { id: "clips", label: "Clips" },
   { id: "review", label: "Review Queue" },
+  { id: "vods", label: "VODs" },
   { id: "settings", label: "Settings" },
 ];
 

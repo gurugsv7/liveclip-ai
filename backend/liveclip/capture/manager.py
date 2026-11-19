@@ -131,6 +131,16 @@ class LiveSession:
                                          "t_start": s.t_start, "t_end": s.t_end, "size": s.size})
 
     def _on_state(self, state: str, detail: str) -> None:
+        if state == "live":
+            self._vod_queued = False
+        elif state == "offline" and self.state in ("live", "reconnecting") and self.live_since                 and not getattr(self, "_vod_queued", False):
+            # the broadcast ended: optionally analyse the whole past broadcast for moments missed live
+            try:
+                st = self.mgr.get_streamer(self.streamer_id) or self.streamer
+                if self.ctx.vod.after_stream(st, self.live_since, time.time()):
+                    self._vod_queued = True
+            except Exception:  # noqa: BLE001 - never let this touch capture
+                log.exception("after-stream VOD scheduling failed")
         if state != self.state or detail != self.detail:
             log.info("[%s] %s -> %s %s", self.streamer["name"], self.session_id, state, detail)
         self.state, self.detail = state, detail
@@ -341,6 +351,7 @@ class StreamManager:
         for r in rows:
             r["facecam"] = json.loads(r["facecam"]) if r["facecam"] else None
             r["ai_enabled"] = bool(r["ai_enabled"])
+            r["vod_after_stream"] = bool(r.get("vod_after_stream"))
         return rows
 
     def add_streamer(self, name: str, url: str, slot: int | None = None, priority: int = 2) -> dict:
@@ -366,11 +377,15 @@ class StreamManager:
         if r:
             r["facecam"] = json.loads(r["facecam"]) if r["facecam"] else None
             r["ai_enabled"] = bool(r["ai_enabled"])
+            r["vod_after_stream"] = bool(r.get("vod_after_stream"))
         return r
 
     def update_streamer(self, sid: str, fields: dict) -> dict:
-        allowed = {"name", "priority", "color", "facecam", "default_layout", "usage_notes", "slot", "language", "caption_mode"}
+        allowed = {"name", "priority", "color", "facecam", "default_layout", "usage_notes", "slot", "language", "caption_mode",
+                   "vod_after_stream"}
         f = {k: v for k, v in fields.items() if k in allowed}
+        if "vod_after_stream" in f:
+            f["vod_after_stream"] = 1 if f["vod_after_stream"] else 0
         if "facecam" in f and f["facecam"] is not None:
             fc = f["facecam"]
             if not all(0 <= float(fc[k]) <= 1 for k in ("x", "y", "w", "h")) or fc["w"] <= 0.02 or fc["h"] <= 0.02:

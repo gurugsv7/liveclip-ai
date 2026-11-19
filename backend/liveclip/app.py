@@ -46,7 +46,14 @@ class PatchStream(BaseModel):
     usage_notes: str | None = Field(None, max_length=1000)
     language: Literal["en", "ta", "auto"] | None = None
     caption_mode: Literal["tanglish", "native"] | None = None
+    vod_after_stream: bool | None = None
     clear_facecam: bool = False
+
+
+class VodReq(BaseModel):
+    url: str | None = Field(None, max_length=500)
+    path: str | None = Field(None, max_length=1000)
+    streamer_id: str | None = Field(None, max_length=40)
 
 
 class MoveStream(BaseModel):
@@ -107,6 +114,8 @@ def create_app(ctx: AppContext | None = None, serve_frontend: bool = True) -> Fa
         c.jobs.recover()
         c.hub.publish("startup", {"recovery": rec}, notable=True)
         c.jobs.start()
+        c.vod.recover()
+        c.vod.start()
         c.manager.start_loops()
         c.resources.start()
         await c.clips.resume_pending()
@@ -124,6 +133,7 @@ def create_app(ctx: AppContext | None = None, serve_frontend: bool = True) -> Fa
             yield
         finally:
             sweeper.cancel()
+            await c.vod.stop()
             await c.manager.stop_all()
             await c.jobs.stop()
             await c.resources.stop()
@@ -523,6 +533,33 @@ def create_app(ctx: AppContext | None = None, serve_frontend: bool = True) -> Fa
             return await C().youtube.authorize()
         except Exception as e:
             err(e)
+
+    # ------------------------------------------------------------ VODs (past broadcasts)
+    @app.get("/api/vods", tags=["vods"])
+    def list_vods(limit: int = 50):
+        return {"jobs": C().vod.list(min(limit, 200)), **C().vod.info()}
+
+    @app.post("/api/vods", tags=["vods"])
+    def add_vod(req: VodReq):
+        try:
+            return C().vod.submit(req.url, req.path, req.streamer_id)
+        except SourceError as e:
+            err(e)
+
+    @app.post("/api/vods/{jid}/cancel", tags=["vods"])
+    def cancel_vod(jid: str):
+        try:
+            return C().vod.cancel(jid)
+        except KeyError:
+            err(KeyError("unknown VOD job"), 404)
+
+    @app.delete("/api/vods/{jid}", tags=["vods"])
+    def delete_vod(jid: str):
+        try:
+            C().vod.remove(jid)
+        except SourceError as e:
+            err(e)
+        return {"ok": True}
 
     # ------------------------------------------------------------ jobs/storage
     @app.get("/api/jobs", tags=["system"])

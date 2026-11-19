@@ -74,6 +74,10 @@ export function connectWS() {
       case "clip":
         s.upsertClip(d);
         break;
+      case "vod":
+        if (d.deleted) s.removeVod(d.id);
+        else s.upsertVod(d);
+        break;
       case "clip_deleted":
         s.removeClip(d.id);
         break;

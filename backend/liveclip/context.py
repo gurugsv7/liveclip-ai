@@ -60,6 +60,8 @@ class AppContext:
         self.clips = ClipService(self)
         self.resources = ResourceMonitor(self)
         self.youtube = YouTubePublisher(self)
+        from .vod.service import VodService
+        self.vod = VodService(self)
 
     def _setup_logging(self) -> None:
         root = logging.getLogger()

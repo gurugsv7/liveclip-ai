@@ -74,6 +74,8 @@ if (-not $NoCuda) {
 }
 # YouTube changes break older streamlink plugins; always pull the newest on (re)setup
 & $vpy -m pip install --upgrade streamlink
+# same for yt-dlp (past broadcasts / VODs): sites change, old versions stop working
+& $vpy -m pip install --upgrade yt-dlp
 & "$venv\Scripts\streamlink.exe" --version
 
 # ---------------------------------------------------------------- frontend

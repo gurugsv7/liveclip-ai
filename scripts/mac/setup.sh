@@ -44,6 +44,7 @@ PY="$(command -v python3.11 || echo /opt/homebrew/bin/python3.11)"
 VPY="$ROOT/backend/.venv/bin/python"
 "$VPY" -m pip install --upgrade pip wheel
 "$VPY" -m pip install -e "backend[ai,vision,test]"
+"$VPY" -m pip install --upgrade streamlink yt-dlp   # sites change; always the newest
 "$ROOT/backend/.venv/bin/streamlink" --version
 
 step "Frontend"

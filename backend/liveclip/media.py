@@ -64,6 +64,14 @@ def stream_summary(info: dict) -> dict:
     except ValueError:
         pass
     for s in info.get("streams", []):
+        try:
+            st = float(s.get("start_time") or 0.0)
+        except ValueError:
+            st = 0.0
+        if s.get("codec_type") == "video" and "video_start" not in out:
+            out["video_start"] = st
+        elif s.get("codec_type") == "audio" and "audio_start" not in out:
+            out["audio_start"] = st
         if s.get("codec_type") == "video" and "width" not in out:
             out["width"], out["height"] = s.get("width"), s.get("height")
             out["video_codec"] = s.get("codec_name")

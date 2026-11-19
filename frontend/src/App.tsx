@@ -9,6 +9,7 @@ import { connectWS } from "@/lib/ws";
 import { ClipsPage, ReviewQueue } from "@/pages/ClipsPage";
 import { LiveMonitor } from "@/pages/LiveMonitor";
 import { SettingsPage } from "@/pages/Settings";
+import { VodsPage } from "@/pages/VodsPage";
 
 let started = false;
 
@@ -36,6 +37,7 @@ export default function App() {
             {page === "live" && <LiveMonitor />}
             {page === "clips" && <ClipsPage />}
             {page === "review" && <ReviewQueue />}
+            {page === "vods" && <VodsPage />}
             {page === "settings" && <SettingsPage />}
           </main>
           {page === "live" && <Sidebar />}

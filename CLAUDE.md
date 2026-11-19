@@ -80,6 +80,18 @@ Storage stays bounded: rolling buffer 180 s/stream; near-miss AI clips (score 0.
 Manual saves, marks and viewer clips are never auto-deleted.
 When tuning, replay real recorded session data and add a regression test from it.
 
+## VODs / past broadcasts (`backend/liveclip/vod/`, VODs page)
+- Paste a Twitch / YouTube / Kick VOD link or a local file path. **Audio only** is downloaded
+  (Twitch `Audio_Only`: 9.5 h ≈ 0.9 GB vs 30 GB source), the *same* live detectors run over it on the
+  recording's clock (`vod/analyzer.py`, ~25-30× realtime with Whisper), then **only the moments' video**
+  is fetched (`yt-dlp --download-sections`, ≤ `vod.max_height`) or cut from the local file.
+- Moments become normal `auto` clips in their own `kind='vod'` session → extract/transcribe/score →
+  Review / Maybe. Never touch the user's own local file; VOD section files are deleted once extracted.
+- While streams are captured, yt-dlp is rate-limited to a share of the spare bandwidth (capture first).
+- Per-streamer "after each stream" (`streamers.vod_after_stream`): when a monitored stream goes offline,
+  its past broadcast is found and analysed; moments already caught live (hype events) are skipped.
+- Twitch/Kick VODs have no chat replay (no private APIs); YouTube live replays include chat (yt-dlp `live_chat`).
+
 ## Engineering rules
 - Never break capture: recording must keep running if AI, chat, rendering or the UI fails.
 - Never mix streams: every row/file/job carries its own `streamer_id` + `session_id`.

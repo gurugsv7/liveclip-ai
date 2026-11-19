@@ -1,4 +1,4 @@
-import type { AppConfig, Clip, HypeEvent, Job, Streamer, SystemStatus } from "./types";
+import type { AppConfig, Clip, HypeEvent, Job, Streamer, SystemStatus, VodJob } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -48,6 +48,11 @@ export const api = {
   deleteBuffer: (id: string) =>
     req<{ deleted: number; protected_kept: number }>("POST", `/api/streams/${id}/delete-buffer`, { confirm: true }),
   setAI: (id: string, enabled: boolean) => req<any>("POST", `/api/streams/${id}/ai`, { enabled }),
+
+  vods: () => req<{ jobs: VodJob[]; ytdlp: boolean }>("GET", "/api/vods"),
+  addVod: (b: { url?: string; path?: string; streamer_id?: string }) => req<VodJob>("POST", "/api/vods", b),
+  cancelVod: (id: string) => req<VodJob>("POST", `/api/vods/${id}/cancel`),
+  removeVod: (id: string) => req<{ ok: boolean }>("DELETE", `/api/vods/${id}`),
 
   hype: (streamer_id?: string) => req<HypeEvent[]>("GET", `/api/hype${streamer_id ? `?streamer_id=${streamer_id}` : ""}`),
   timeline: () => req<Record<string, any>>("GET", "/api/timeline"),

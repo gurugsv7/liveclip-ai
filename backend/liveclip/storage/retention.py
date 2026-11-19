@@ -103,7 +103,15 @@ class RetentionManager:
                     continue
                 newest = max(s["t_end"] for s in segs)
                 cutoff = newest - cfg.buffer.retention_seconds if active else float("inf")
+                vod = self.db.scalar("SELECT kind FROM stream_sessions WHERE id=?", (sid,)) == "vod"
                 for s in segs:
+                    if vod:
+                        # a VOD moment's video is only needed until its clip is extracted (the clip
+                        # protects it until then); 120 s grace covers download -> clip creation
+                        if time.time() - s["created_at"] > 120 and not self._overlaps(s, prots):
+                            if self._delete_segment(s):
+                                stats["deleted"] += 1
+                        continue
                     if s["t_end"] <= cutoff and not self._overlaps(s, prots):
                         if self._delete_segment(s):
                             stats["deleted"] += 1

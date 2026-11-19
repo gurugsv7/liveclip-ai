@@ -12,6 +12,7 @@ dependencies = [
   "psutil>=5.9",
   "numpy>=1.26",
   "streamlink>=6.7",
+  "yt-dlp>=2025.1.1",   # past broadcasts (VODs): audio + detected moments only
 ]
 
 [project.optional-dependencies]

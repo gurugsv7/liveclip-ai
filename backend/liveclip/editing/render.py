@@ -65,16 +65,21 @@ class RenderSpec:
     max_bitrate_mbps: float = 20.0
     audio_bitrate_k: int = 192
     normalize_audio: bool = False
+    # first instant where BOTH picture and sound exist in the source file. Stream-copied clips
+    # start the video at the first keyframe (~2 s in) while audio starts at 0; trimming before
+    # that point and rebasing each stream with PTS-STARTPTS would put the sound ~2 s behind.
+    media_start: float = 0.0
 
 
 def build_pieces(spec: RenderSpec) -> list[tuple[float, float]]:
+    lo = max(0.0, spec.media_start)
     if spec.segments:
-        pieces = [(max(0.0, float(a)), min(spec.duration, float(b))) for a, b in spec.segments]
+        pieces = [(max(lo, float(a)), min(spec.duration, float(b))) for a, b in spec.segments]
         pieces = [(a, b) for a, b in pieces if b - a > 0.3]
         if not pieces:
             raise MediaError("No usable segments")
         return pieces
-    a = max(0.0, spec.trim_start)
+    a = max(lo, spec.trim_start)
     b = min(spec.duration, spec.trim_end if spec.trim_end else spec.duration)
     if b - a < 1.0:
         raise MediaError("Trim range is shorter than 1 second")

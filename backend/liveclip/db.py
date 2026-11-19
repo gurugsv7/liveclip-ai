@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS streamers (
   facecam TEXT,              -- JSON {x,y,w,h} normalized 0..1
   default_layout TEXT NOT NULL DEFAULT 'smart_crop',
   usage_notes TEXT NOT NULL DEFAULT '',
+  vod_after_stream INTEGER NOT NULL DEFAULT 0,  -- analyse the past broadcast after the stream ends
   created_at REAL NOT NULL
 );
 
@@ -56,6 +57,7 @@ CREATE TABLE IF NOT EXISTS stream_sessions (
   measured_kbps REAL,
   quality_requested TEXT, quality_selected TEXT,
   reconnects INTEGER NOT NULL DEFAULT 0,
+  kind TEXT NOT NULL DEFAULT 'live',   -- live | vod
   error TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_sessions_streamer ON stream_sessions(streamer_id);
@@ -197,6 +199,26 @@ CREATE TABLE IF NOT EXISTS export_jobs (
   created_at REAL NOT NULL, finished_at REAL
 );
 
+CREATE TABLE IF NOT EXISTS vod_jobs (
+  id TEXT PRIMARY KEY,
+  streamer_id TEXT REFERENCES streamers(id) ON DELETE SET NULL,
+  session_id TEXT,
+  source TEXT NOT NULL,           -- manual | after_stream
+  platform TEXT NOT NULL,         -- twitch | youtube | kick | local
+  url TEXT, path TEXT, title TEXT,
+  duration REAL,
+  state TEXT NOT NULL,            -- queued|waiting_vod|downloading|analyzing|cutting|done|failed|cancelled
+  progress REAL NOT NULL DEFAULT 0,
+  detail TEXT,
+  moments INTEGER NOT NULL DEFAULT 0,
+  clips INTEGER NOT NULL DEFAULT 0,
+  not_before REAL,
+  payload TEXT,                   -- JSON (after_stream: live window to look for)
+  error TEXT,
+  created_at REAL NOT NULL, started_at REAL, finished_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_vod_state ON vod_jobs(state, created_at);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -234,6 +256,12 @@ class Database:
             self._conn.execute("ALTER TABLE streamers ADD COLUMN language TEXT NOT NULL DEFAULT 'en'")
         if cols and "caption_mode" not in cols:
             self._conn.execute("ALTER TABLE streamers ADD COLUMN caption_mode TEXT NOT NULL DEFAULT 'tanglish'")
+        if cols and "vod_after_stream" not in cols:
+            # analyse the whole past broadcast once the stream ends (moments missed live)
+            self._conn.execute("ALTER TABLE streamers ADD COLUMN vod_after_stream INTEGER NOT NULL DEFAULT 0")
+        scols = {r[1] for r in self._conn.execute("PRAGMA table_info(stream_sessions)")}
+        if scols and "kind" not in scols:
+            self._conn.execute("ALTER TABLE stream_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'live'")
         ccols = {r[1] for r in self._conn.execute("PRAGMA table_info(clips)")}
         for col in ("cover_path", "post_caption"):
             if ccols and col not in ccols:

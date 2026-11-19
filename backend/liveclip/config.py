@@ -166,6 +166,19 @@ class AudioMonitorConfig(BaseModel):
     allow_multi: bool = True
 
 
+class VodConfig(BaseModel):
+    # Past broadcasts: only the audio is downloaded for analysis; the video of each detected
+    # moment is then fetched at up to this height.
+    max_height: int = Field(1080, ge=360, le=2160)
+    # While live streams are being captured, VOD downloads may use at most this share of the
+    # bandwidth left over by capture (capture always comes first).
+    spare_bandwidth_share: float = Field(0.8, ge=0.1, le=1.0)
+    min_rate_mbps: float = Field(1.0, ge=0.2, le=50)
+    keep_audio: bool = False           # keep the downloaded VOD audio after analysis
+    # after a stream ends, keep looking for its past broadcast for this long
+    after_stream_wait_s: float = Field(3600.0, ge=300, le=6 * 3600)
+
+
 class AppConfig(BaseModel):
     buffer: BufferConfig = BufferConfig()
     clips: ClipConfig = ClipConfig()
@@ -175,6 +188,7 @@ class AppConfig(BaseModel):
     render: RenderConfig = RenderConfig()
     publishing: PublishingConfig = PublishingConfig()
     audio_monitor: AudioMonitorConfig = AudioMonitorConfig()
+    vod: VodConfig = VodConfig()
     # after a restart/crash/reboot, start again every stream that was being monitored when the app stopped
     resume_monitoring: bool = True
     # Allows `local:` fixture sources. Off by default; tests and demos enable it.

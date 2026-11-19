@@ -498,6 +498,16 @@ class ClipService:
         return audio, round(best, 3)
 
     # --- rendering ------------------------------------------------------
+    def _media_start(self, path: str | None) -> float:
+        """Latest stream start in the source file (see RenderSpec.media_start); 0 if unknown."""
+        if not path or not self.ctx.tools.ffprobe:
+            return 0.0
+        try:
+            s = stream_summary(ffprobe(self.ctx.tools.ffprobe, path))
+        except (MediaError, ValueError, OSError):
+            return 0.0
+        return max(0.0, s.get("video_start") or 0.0, s.get("audio_start") or 0.0)
+
     def render_spec(self, clip: dict, preview: bool, out: Path) -> RenderSpec:
         rc = self.cfg.render
         streamer = self.db.one("SELECT * FROM streamers WHERE id=?", (clip["streamer_id"],))
@@ -540,6 +550,7 @@ class ClipService:
             fps=int(cs.get("fps", rc.fps)), preview=preview, encoder=rc.encoder, nvenc_cq=rc.nvenc_cq, x264_crf=rc.x264_crf,
             max_bitrate_mbps=rc.max_bitrate_mbps, audio_bitrate_k=rc.audio_bitrate_k,
             normalize_audio=bool(lp.get("normalize_audio", False)),
+            media_start=self._media_start(clip["file_path"]),
         )
 
     async def handle_render(self, job: dict) -> None:

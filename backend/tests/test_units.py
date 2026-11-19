@@ -688,3 +688,23 @@ def test_facecam_layout_is_used_when_a_facecam_is_known_unless_user_chose():
     assert effective_layout("smart_crop", {"layout_locked": True}, fc) == "smart_crop"
     assert effective_layout("smart_crop", {}, None) == "smart_crop"
     assert effective_layout("letterbox", {}, fc) == "letterbox"
+
+
+def test_render_never_trims_before_both_streams_exist():
+    """Real case 2026-11-19 (speed clip_19da030ce567): the stream-copied clip's video starts at the
+    first keyframe (2.0 s) while audio starts at 0. A reel window of 0.0-21.5 was trimmed from 0 and
+    each stream rebased with PTS-STARTPTS, so the sound played 2 s behind the picture."""
+    from liveclip.editing.render import RenderSpec, build_pieces
+    from liveclip.media import stream_summary
+
+    probe = {"format": {"duration": "34.769"}, "streams": [
+        {"codec_type": "video", "width": 1920, "height": 1080, "r_frame_rate": "60/1", "start_time": "2.000000"},
+        {"codec_type": "audio", "sample_rate": "48000", "channels": 2, "start_time": "0.000000"}]}
+    s = stream_summary(probe)
+    assert s["video_start"] == 2.0 and s["audio_start"] == 0.0
+    start = max(s["video_start"], s["audio_start"])
+
+    base = dict(src="x.mp4", src_w=1920, src_h=1080, src_fps=60, duration=34.769, out="o.mp4", media_start=start)
+    assert build_pieces(RenderSpec(trim_start=0.0, trim_end=21.5, **base)) == [(2.0, 21.5)]
+    assert build_pieces(RenderSpec(trim_start=29.0, trim_end=33.0, **base)) == [(29.0, 33.0)]   # later windows untouched
+    assert build_pieces(RenderSpec(segments=[(0.5, 8.0), (12.0, 20.0)], **base)) == [(2.0, 8.0), (12.0, 20.0)]
